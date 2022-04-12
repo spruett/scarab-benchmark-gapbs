@@ -1,0 +1,21 @@
+import os
+import copy
+
+gap_dir = os.path.dirname(os.path.realpath(__file__))
+gap_path = "{gap_dir}/gapbs/".format(gap_dir=gap_dir)
+pintool_args="-fast_forward_to_start_inst 1"
+
+gap_args = "-g 24 -n 600"
+bfs =  Program("bfs",  "./bfs  {args}".format(args=gap_args), path=gap_path, pintool_args=pintool_args, copy=True, weight=1.0)
+gap_args = "-g 24 -n 300"
+pr =   Program("pr",   "./pr   {args}".format(args=gap_args), path=gap_path, pintool_args=pintool_args, copy=True, weight=1.0)
+gap_args = "-g 24 -n 4"
+tc =   Program("tc",   "./tc   {args}".format(args=gap_args), path=gap_path, pintool_args=pintool_args, copy=True, weight=1.0)
+gap_args = "-g 24 -n 600"
+cc =   Program("cc",   "./cc   {args}".format(args=gap_args), path=gap_path, pintool_args=pintool_args, copy=True, weight=1.0)
+gap_args = "-g 24 -n 300"
+bc =   Program("bc",   "./bc   {args}".format(args=gap_args), path=gap_path, pintool_args=pintool_args, copy=True, weight=1.0)
+gap_args = "-g 24 -n 600"
+sssp = Program("sssp", "./sssp {args}".format(args=gap_args), path=gap_path, pintool_args=pintool_args, copy=True, weight=1.0)
+
+gapbs = Suite("gapbs", [bfs, pr, tc, cc, bc, sssp])

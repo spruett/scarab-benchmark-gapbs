@@ -1,0 +1,4120 @@
+diff --git a/Makefile b/Makefile
+index 1ddf802..f7255d9 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,7 @@
+ # See LICENSE.txt for license details.
+ 
+-CXX_FLAGS += -std=c++11 -O3 -Wall
++SERIAL = 1
++CXX_FLAGS += -std=c++11 -O3 -Wall -static -fno-reorder-blocks -fno-reorder-blocks-and-partition
+ PAR_FLAG = -fopenmp
+ 
+ ifneq (,$(findstring icpc,$(CXX)))
+diff --git a/program_descriptor.def b/program_descriptor.def
+new file mode 100644
+index 0000000..418a1a8
+--- /dev/null
++++ b/program_descriptor.def
+@@ -0,0 +1,28 @@
++import os
++import copy
++
++gap_path = "/export/utexas/spruett/branch_runahead/scarab-private/utils/gapbs/"
++pintool_args="-fast_forward_to_start_inst 1"
++repeat = 5
++
++gap_args = "-g 24 -n 600"
++bfs =  Program("bfs",  "./bfs  {args}".format(args=gap_args), path=gap_path, pintool_args=pintool_args, copy=True, weight=1.0)
++gap_args = "-g 24 -n 300"
++pr =   Program("pr",   "./pr   {args}".format(args=gap_args), path=gap_path, pintool_args=pintool_args, copy=True, weight=1.0)
++gap_args = "-g 24 -n 4"
++tc =   Program("tc",   "./tc   {args}".format(args=gap_args), path=gap_path, pintool_args=pintool_args, copy=True, weight=1.0)
++gap_args = "-g 24 -n 600"
++cc =   Program("cc",   "./cc   {args}".format(args=gap_args), path=gap_path, pintool_args=pintool_args, copy=True, weight=1.0)
++gap_args = "-g 24 -n 300"
++bc =   Program("bc",   "./bc   {args}".format(args=gap_args), path=gap_path, pintool_args=pintool_args, copy=True, weight=1.0)
++gap_args = "-g 24 -n 600"
++sssp = Program("sssp", "./sssp {args}".format(args=gap_args), path=gap_path, pintool_args=pintool_args, copy=True, weight=1.0)
++
++#bfs  = Benchmark("bfs",   [ setattr(bfs,  'name', 'bfs{}'.format(i))  or copy.deepcopy(bfs)   for i in range(repeat) ]  )
++#pr   = Benchmark("pr",    [ setattr(pr,   'name', 'pr{}'.format(i))   or copy.deepcopy(pr)    for i in range(repeat) ]  )
++#tc   = Benchmark("tc",    [ setattr(tc,   'name', 'tc{}'.format(i))   or copy.deepcopy(tc)    for i in range(repeat) ]  )
++#cc   = Benchmark("cc",    [ setattr(cc,   'name', 'cc{}'.format(i))   or copy.deepcopy(cc)    for i in range(repeat) ]  )
++#bc   = Benchmark("bc",    [ setattr(bc,   'name', 'bc{}'.format(i))   or copy.deepcopy(bc)    for i in range(repeat) ]  )
++#sssp = Benchmark("sssp",  [ setattr(sssp, 'name', 'sssp{}'.format(i)) or copy.deepcopy(sssp)  for i in range(repeat) ]  )
++
++gapbs = Suite("gapbs", [bfs, pr, tc, cc, bc, sssp])
+diff --git a/src/bc.cc b/src/bc.cc
+index f1f19c4..fab10c8 100644
+--- a/src/bc.cc
++++ b/src/bc.cc
+@@ -16,6 +16,8 @@
+ #include "timer.h"
+ #include "util.h"
+ 
++#include "../../scarab_markers.h"
++
+ 
+ /*
+ GAP Benchmark Suite
+@@ -44,44 +46,44 @@ propagation phase.
+ 
+ 
+ using namespace std;
+-typedef float ScoreT;
++typedef float  ScoreT;
+ typedef double CountT;
+ 
+ 
+-void PBFS(const Graph &g, NodeID source, pvector<CountT> &path_counts,
+-    Bitmap &succ, vector<SlidingQueue<NodeID>::iterator> &depth_index,
+-    SlidingQueue<NodeID> &queue) {
++void PBFS(const Graph& g, NodeID source, pvector<CountT>& path_counts,
++          Bitmap& succ, vector<SlidingQueue<NodeID>::iterator>& depth_index,
++          SlidingQueue<NodeID>& queue) {
+   pvector<NodeID> depths(g.num_nodes(), -1);
+-  depths[source] = 0;
++  depths[source]      = 0;
+   path_counts[source] = 1;
+   queue.push_back(source);
+   depth_index.push_back(queue.begin());
+   queue.slide_window();
+   const NodeID* g_out_start = g.out_neigh(0).begin();
+-  #pragma omp parallel
++#pragma omp parallel
+   {
+-    NodeID depth = 0;
++    NodeID              depth = 0;
+     QueueBuffer<NodeID> lqueue(queue);
+-    while (!queue.empty()) {
++    while(!queue.empty()) {
+       depth++;
+-      #pragma omp for schedule(dynamic, 64) nowait
+-      for (auto q_iter = queue.begin(); q_iter < queue.end(); q_iter++) {
++#pragma omp for schedule(dynamic, 64) nowait
++      for(auto q_iter = queue.begin(); q_iter < queue.end(); q_iter++) {
+         NodeID u = *q_iter;
+-        for (NodeID &v : g.out_neigh(u)) {
+-          if ((depths[v] == -1) &&
+-              (compare_and_swap(depths[v], static_cast<NodeID>(-1), depth))) {
++        for(NodeID& v : g.out_neigh(u)) {
++          if((depths[v] == -1) &&
++             (compare_and_swap(depths[v], static_cast<NodeID>(-1), depth))) {
+             lqueue.push_back(v);
+           }
+-          if (depths[v] == depth) {
++          if(depths[v] == depth) {
+             succ.set_bit_atomic(&v - g_out_start);
+-            #pragma omp atomic
++#pragma omp atomic
+             path_counts[v] += path_counts[u];
+           }
+         }
+       }
+       lqueue.flush();
+-      #pragma omp barrier
+-      #pragma omp single
++#pragma omp barrier
++#pragma omp single
+       {
+         depth_index.push_back(queue.begin());
+         queue.slide_window();
+@@ -92,38 +94,29 @@ void PBFS(const Graph &g, NodeID source, pvector<CountT> &path_counts,
+ }
+ 
+ 
+-pvector<ScoreT> Brandes(const Graph &g, SourcePicker<Graph> &sp,
++pvector<ScoreT> Brandes(const Graph& g, SourcePicker<Graph>& sp,
+                         NodeID num_iters) {
+-  Timer t;
+-  t.Start();
+-  pvector<ScoreT> scores(g.num_nodes(), 0);
+-  pvector<CountT> path_counts(g.num_nodes());
+-  Bitmap succ(g.num_edges_directed());
++  pvector<ScoreT>                        scores(g.num_nodes(), 0);
++  pvector<CountT>                        path_counts(g.num_nodes());
++  Bitmap                                 succ(g.num_edges_directed());
+   vector<SlidingQueue<NodeID>::iterator> depth_index;
+-  SlidingQueue<NodeID> queue(g.num_nodes());
+-  t.Stop();
+-  PrintStep("a", t.Seconds());
+-  const NodeID* g_out_start = g.out_neigh(0).begin();
+-  for (NodeID iter=0; iter < num_iters; iter++) {
++  SlidingQueue<NodeID>                   queue(g.num_nodes());
++  const NodeID*                          g_out_start = g.out_neigh(0).begin();
++  for(NodeID iter = 0; iter < num_iters; iter++) {
+     NodeID source = sp.PickNext();
+-    cout << "source: " << source << endl;
+-    t.Start();
+     path_counts.fill(0);
+     depth_index.resize(0);
+     queue.reset();
+     succ.reset();
+     PBFS(g, source, path_counts, succ, depth_index, queue);
+-    t.Stop();
+-    PrintStep("b", t.Seconds());
+     pvector<ScoreT> deltas(g.num_nodes(), 0);
+-    t.Start();
+-    for (int d=depth_index.size()-2; d >= 0; d--) {
+-      #pragma omp parallel for schedule(dynamic, 64)
+-      for (auto it = depth_index[d]; it < depth_index[d+1]; it++) {
+-        NodeID u = *it;
++    for(int d = depth_index.size() - 2; d >= 0; d--) {
++#pragma omp parallel for schedule(dynamic, 64)
++      for(auto it = depth_index[d]; it < depth_index[d + 1]; it++) {
++        NodeID u       = *it;
+         ScoreT delta_u = 0;
+-        for (NodeID &v : g.out_neigh(u)) {
+-          if (succ.get_bit(&v - g_out_start)) {
++        for(NodeID& v : g.out_neigh(u)) {
++          if(succ.get_bit(&v - g_out_start)) {
+             delta_u += (path_counts[u] / path_counts[v]) * (1 + deltas[v]);
+           }
+         }
+@@ -131,28 +124,26 @@ pvector<ScoreT> Brandes(const Graph &g, SourcePicker<Graph> &sp,
+         scores[u] += delta_u;
+       }
+     }
+-    t.Stop();
+-    PrintStep("p", t.Seconds());
+   }
+   // normalize scores
+   ScoreT biggest_score = 0;
+-  #pragma omp parallel for reduction(max : biggest_score)
+-  for (NodeID n=0; n < g.num_nodes(); n++)
++#pragma omp parallel for reduction(max : biggest_score)
++  for(NodeID n = 0; n < g.num_nodes(); n++)
+     biggest_score = max(biggest_score, scores[n]);
+-  #pragma omp parallel for
+-  for (NodeID n=0; n < g.num_nodes(); n++)
++#pragma omp parallel for
++  for(NodeID n = 0; n < g.num_nodes(); n++)
+     scores[n] = scores[n] / biggest_score;
+   return scores;
+ }
+ 
+ 
+-void PrintTopScores(const Graph &g, const pvector<ScoreT> &scores) {
++void PrintTopScores(const Graph& g, const pvector<ScoreT>& scores) {
+   vector<pair<NodeID, ScoreT>> score_pairs(g.num_nodes());
+-  for (NodeID n : g.vertices())
++  for(NodeID n : g.vertices())
+     score_pairs[n] = make_pair(n, scores[n]);
+-  int k = 5;
++  int                          k     = 5;
+   vector<pair<ScoreT, NodeID>> top_k = TopK(score_pairs, k);
+-  for (auto kvp : top_k)
++  for(auto kvp : top_k)
+     cout << kvp.second << ":" << kvp.first << endl;
+ }
+ 
+@@ -162,10 +153,10 @@ void PrintTopScores(const Graph &g, const pvector<ScoreT> &scores) {
+ // - uses vector for BFS queue
+ // - regenerates farthest to closest traversal order from depths
+ // - regenerates successors from depths
+-bool BCVerifier(const Graph &g, SourcePicker<Graph> &sp, NodeID num_iters,
+-                const pvector<ScoreT> &scores_to_test) {
++bool BCVerifier(const Graph& g, SourcePicker<Graph>& sp, NodeID num_iters,
++                const pvector<ScoreT>& scores_to_test) {
+   pvector<ScoreT> scores(g.num_nodes(), 0);
+-  for (int iter=0; iter < num_iters; iter++) {
++  for(int iter = 0; iter < num_iters; iter++) {
+     NodeID source = sp.PickNext();
+     // BFS phase, only records depth & path_counts
+     pvector<int> depths(g.num_nodes(), -1);
+@@ -175,32 +166,32 @@ bool BCVerifier(const Graph &g, SourcePicker<Graph> &sp, NodeID num_iters,
+     vector<NodeID> to_visit;
+     to_visit.reserve(g.num_nodes());
+     to_visit.push_back(source);
+-    for (auto it = to_visit.begin(); it != to_visit.end(); it++) {
++    for(auto it = to_visit.begin(); it != to_visit.end(); it++) {
+       NodeID u = *it;
+-      for (NodeID v : g.out_neigh(u)) {
+-        if (depths[v] == -1) {
++      for(NodeID v : g.out_neigh(u)) {
++        if(depths[v] == -1) {
+           depths[v] = depths[u] + 1;
+           to_visit.push_back(v);
+         }
+-        if (depths[v] == depths[u] + 1)
++        if(depths[v] == depths[u] + 1)
+           path_counts[v] += path_counts[u];
+       }
+     }
+     // Get lists of vertices at each depth
+     vector<vector<NodeID>> verts_at_depth;
+-    for (NodeID n : g.vertices()) {
+-      if (depths[n] != -1) {
+-        if (depths[n] >= static_cast<int>(verts_at_depth.size()))
++    for(NodeID n : g.vertices()) {
++      if(depths[n] != -1) {
++        if(depths[n] >= static_cast<int>(verts_at_depth.size()))
+           verts_at_depth.resize(depths[n] + 1);
+         verts_at_depth[depths[n]].push_back(n);
+       }
+     }
+     // Going from farthest to clostest, compute "depencies" (deltas)
+     pvector<ScoreT> deltas(g.num_nodes(), 0);
+-    for (int depth=verts_at_depth.size()-1; depth >= 0; depth--) {
+-      for (NodeID u : verts_at_depth[depth]) {
+-        for (NodeID v : g.out_neigh(u)) {
+-          if (depths[v] == depths[u] + 1) {
++    for(int depth = verts_at_depth.size() - 1; depth >= 0; depth--) {
++      for(NodeID u : verts_at_depth[depth]) {
++        for(NodeID v : g.out_neigh(u)) {
++          if(depths[v] == depths[u] + 1) {
+             deltas[u] += (path_counts[u] / path_counts[v]) * (1 + deltas[v]);
+           }
+         }
+@@ -210,13 +201,13 @@ bool BCVerifier(const Graph &g, SourcePicker<Graph> &sp, NodeID num_iters,
+   }
+   // Normalize scores
+   ScoreT biggest_score = *max_element(scores.begin(), scores.end());
+-  for (NodeID n : g.vertices())
++  for(NodeID n : g.vertices())
+     scores[n] = scores[n] / biggest_score;
+   // Compare scores
+   bool all_ok = true;
+-  for (NodeID n : g.vertices()) {
++  for(NodeID n : g.vertices()) {
+     ScoreT delta = abs(scores_to_test[n] - scores[n]);
+-    if (delta > std::numeric_limits<ScoreT>::epsilon()) {
++    if(delta > std::numeric_limits<ScoreT>::epsilon()) {
+       cout << n << ": " << scores[n] << " != " << scores_to_test[n];
+       cout << "(" << delta << ")" << endl;
+       all_ok = false;
+@@ -228,18 +219,19 @@ bool BCVerifier(const Graph &g, SourcePicker<Graph> &sp, NodeID num_iters,
+ 
+ int main(int argc, char* argv[]) {
+   CLIterApp cli(argc, argv, "betweenness-centrality", 1);
+-  if (!cli.ParseArgs())
++  if(!cli.ParseArgs())
+     return -1;
+-  if (cli.num_iters() > 1 && cli.start_vertex() != -1)
++  if(cli.num_iters() > 1 && cli.start_vertex() != -1)
+     cout << "Warning: iterating from same source (-r & -i)" << endl;
+-  Builder b(cli);
+-  Graph g = b.MakeGraph();
++  Builder             b(cli);
++  Graph               g = b.MakeGraph();
+   SourcePicker<Graph> sp(g, cli.start_vertex());
+-  auto BCBound =
+-    [&sp, &cli] (const Graph &g) { return Brandes(g, sp, cli.num_iters()); };
++  auto                BCBound = [&sp, &cli](const Graph& g) {
++    return Brandes(g, sp, cli.num_iters());
++  };
+   SourcePicker<Graph> vsp(g, cli.start_vertex());
+-  auto VerifierBound = [&vsp, &cli] (const Graph &g,
+-                                     const pvector<ScoreT> &scores) {
++  auto                VerifierBound = [&vsp, &cli](const Graph&           g,
++                                    const pvector<ScoreT>& scores) {
+     return BCVerifier(g, vsp, cli.num_iters(), scores);
+   };
+   BenchmarkKernel(cli, g, BCBound, PrintTopScores, VerifierBound);
+diff --git a/src/benchmark.h b/src/benchmark.h
+index 410ec13..fd8d418 100644
+--- a/src/benchmark.h
++++ b/src/benchmark.h
+@@ -17,6 +17,7 @@
+ #include "util.h"
+ #include "writer.h"
+ 
++#include "../../scarab_markers.h"
+ 
+ /*
+ GAP Benchmark Suite
+@@ -28,58 +29,58 @@ Various helper functions to ease writing of kernels
+ 
+ 
+ // Default type signatures for commonly used types
+-typedef int32_t NodeID;
+-typedef int32_t WeightT;
++typedef int32_t                     NodeID;
++typedef int32_t                     WeightT;
+ typedef NodeWeight<NodeID, WeightT> WNode;
+ 
+-typedef CSRGraph<NodeID> Graph;
++typedef CSRGraph<NodeID>        Graph;
+ typedef CSRGraph<NodeID, WNode> WGraph;
+ 
+ typedef BuilderBase<NodeID, NodeID, WeightT> Builder;
+-typedef BuilderBase<NodeID, WNode, WeightT> WeightedBuilder;
++typedef BuilderBase<NodeID, WNode, WeightT>  WeightedBuilder;
+ 
+ typedef WriterBase<NodeID, NodeID> Writer;
+-typedef WriterBase<NodeID, WNode> WeightedWriter;
++typedef WriterBase<NodeID, WNode>  WeightedWriter;
+ 
+ 
+ // Used to pick random non-zero degree starting points for search algorithms
+-template<typename GraphT_>
++template <typename GraphT_>
+ class SourcePicker {
+  public:
+-  explicit SourcePicker(const GraphT_ &g, NodeID given_source = -1)
+-      : given_source(given_source), rng(kRandSeed), udist(0, g.num_nodes()-1),
+-        g_(g) {}
++  explicit SourcePicker(const GraphT_& g, NodeID given_source = -1) :
++      given_source(given_source), rng(kRandSeed), udist(0, g.num_nodes() - 1),
++      g_(g) {}
+ 
+   NodeID PickNext() {
+-    if (given_source != -1)
++    if(given_source != -1)
+       return given_source;
+     NodeID source;
+     do {
+       source = udist(rng);
+-    } while (g_.out_degree(source) == 0);
++    } while(g_.out_degree(source) == 0);
+     return source;
+   }
+ 
+  private:
+-  NodeID given_source;
+-  std::mt19937 rng;
++  NodeID                                given_source;
++  std::mt19937                          rng;
+   std::uniform_int_distribution<NodeID> udist;
+-  const GraphT_ &g_;
++  const GraphT_&                        g_;
+ };
+ 
+ 
+ // Returns k pairs with largest values from list of key-value pairs
+-template<typename KeyT, typename ValT>
++template <typename KeyT, typename ValT>
+ std::vector<std::pair<ValT, KeyT>> TopK(
+-    const std::vector<std::pair<KeyT, ValT>> &to_sort, size_t k) {
++  const std::vector<std::pair<KeyT, ValT>>& to_sort, size_t k) {
+   std::vector<std::pair<ValT, KeyT>> top_k;
+-  ValT min_so_far = 0;
+-  for (auto kvp : to_sort) {
+-    if ((top_k.size() < k) || (kvp.second > min_so_far)) {
++  ValT                               min_so_far = 0;
++  for(auto kvp : to_sort) {
++    if((top_k.size() < k) || (kvp.second > min_so_far)) {
+       top_k.push_back(std::make_pair(kvp.second, kvp.first));
+       std::sort(top_k.begin(), top_k.end(),
+                 std::greater<std::pair<ValT, KeyT>>());
+-      if (top_k.size() > k)
++      if(top_k.size() > k)
+         top_k.resize(k);
+       min_so_far = top_k.back().first;
+     }
+@@ -95,30 +96,28 @@ bool VerifyUnimplemented(...) {
+ 
+ 
+ // Calls (and times) kernel according to command line arguments
+-template<typename GraphT_, typename GraphFunc, typename AnalysisFunc,
+-         typename VerifierFunc>
+-void BenchmarkKernel(const CLApp &cli, const GraphT_ &g,
+-                     GraphFunc kernel, AnalysisFunc stats,
+-                     VerifierFunc verify) {
++template <typename GraphT_, typename GraphFunc, typename AnalysisFunc,
++          typename VerifierFunc>
++void BenchmarkKernel(const CLApp& cli, const GraphT_& g, GraphFunc kernel,
++                     AnalysisFunc stats, VerifierFunc verify) {
+   g.PrintStats();
+   double total_seconds = 0;
+-  Timer trial_timer;
+-  for (int iter=0; iter < cli.num_trials(); iter++) {
+-    trial_timer.Start();
+-    auto result = kernel(g);
+-    trial_timer.Stop();
+-    PrintTime("Trial Time", trial_timer.Seconds());
+-    total_seconds += trial_timer.Seconds();
+-    if (cli.do_analysis() && (iter == (cli.num_trials()-1)))
+-      stats(g, result);
+-    if (cli.do_verify()) {
+-      trial_timer.Start();
+-      PrintLabel("Verification",
+-                 verify(std::ref(g), std::ref(result)) ? "PASS" : "FAIL");
+-      trial_timer.Stop();
+-      PrintTime("Verification Time", trial_timer.Seconds());
+-    }
++  Timer  trial_timer;
++  scarab_begin();
++  for(int iter = 0; iter < cli.num_trials(); iter++) {
++    kernel(g);
++    // auto result = kernel(g);
++    // if (cli.do_analysis() && (iter == (cli.num_trials()-1)))
++    //  stats(g, result);
++    // if (cli.do_verify()) {
++    //  trial_timer.Start();
++    //  PrintLabel("Verification",
++    //             verify(std::ref(g), std::ref(result)) ? "PASS" : "FAIL");
++    //  trial_timer.Stop();
++    //  PrintTime("Verification Time", trial_timer.Seconds());
++    //}
+   }
++  scarab_end();
+   PrintTime("Average Time", total_seconds / cli.num_trials());
+ }
+ 
+diff --git a/src/bfs.cc b/src/bfs.cc
+index 72c85df..3a1ad79 100644
+--- a/src/bfs.cc
++++ b/src/bfs.cc
+@@ -43,15 +43,15 @@ them in parent array as negative numbers. Thus the encoding of parent is:
+ 
+ using namespace std;
+ 
+-int64_t BUStep(const Graph &g, pvector<NodeID> &parent, Bitmap &front,
+-               Bitmap &next) {
++int64_t BUStep(const Graph& g, pvector<NodeID>& parent, Bitmap& front,
++               Bitmap& next) {
+   int64_t awake_count = 0;
+   next.reset();
+-  #pragma omp parallel for reduction(+ : awake_count) schedule(dynamic, 1024)
+-  for (NodeID u=0; u < g.num_nodes(); u++) {
+-    if (parent[u] < 0) {
+-      for (NodeID v : g.in_neigh(u)) {
+-        if (front.get_bit(v)) {
++#pragma omp parallel for reduction(+ : awake_count) schedule(dynamic, 1024)
++  for(NodeID u = 0; u < g.num_nodes(); u++) {
++    if(parent[u] < 0) {
++      for(NodeID v : g.in_neigh(u)) {
++        if(front.get_bit(v)) {
+           parent[u] = v;
+           awake_count++;
+           next.set_bit(u);
+@@ -64,19 +64,19 @@ int64_t BUStep(const Graph &g, pvector<NodeID> &parent, Bitmap &front,
+ }
+ 
+ 
+-int64_t TDStep(const Graph &g, pvector<NodeID> &parent,
+-               SlidingQueue<NodeID> &queue) {
++int64_t TDStep(const Graph& g, pvector<NodeID>& parent,
++               SlidingQueue<NodeID>& queue) {
+   int64_t scout_count = 0;
+-  #pragma omp parallel
++#pragma omp parallel
+   {
+     QueueBuffer<NodeID> lqueue(queue);
+-    #pragma omp for reduction(+ : scout_count)
+-    for (auto q_iter = queue.begin(); q_iter < queue.end(); q_iter++) {
++#pragma omp for reduction(+ : scout_count)
++    for(auto q_iter = queue.begin(); q_iter < queue.end(); q_iter++) {
+       NodeID u = *q_iter;
+-      for (NodeID v : g.out_neigh(u)) {
++      for(NodeID v : g.out_neigh(u)) {
+         NodeID curr_val = parent[v];
+-        if (curr_val < 0) {
+-          if (compare_and_swap(parent[v], curr_val, u)) {
++        if(curr_val < 0) {
++          if(compare_and_swap(parent[v], curr_val, u)) {
+             lqueue.push_back(v);
+             scout_count += -curr_val;
+           }
+@@ -89,45 +89,40 @@ int64_t TDStep(const Graph &g, pvector<NodeID> &parent,
+ }
+ 
+ 
+-void QueueToBitmap(const SlidingQueue<NodeID> &queue, Bitmap &bm) {
+-  #pragma omp parallel for
+-  for (auto q_iter = queue.begin(); q_iter < queue.end(); q_iter++) {
++void        QueueToBitmap(const SlidingQueue<NodeID>& queue, Bitmap& bm) {
++#pragma omp parallel for
++  for(auto q_iter = queue.begin(); q_iter < queue.end(); q_iter++) {
+     NodeID u = *q_iter;
+     bm.set_bit_atomic(u);
+   }
+ }
+ 
+-void BitmapToQueue(const Graph &g, const Bitmap &bm,
+-                   SlidingQueue<NodeID> &queue) {
+-  #pragma omp parallel
++void        BitmapToQueue(const Graph& g, const Bitmap& bm,
++                          SlidingQueue<NodeID>& queue) {
++#pragma omp parallel
+   {
+     QueueBuffer<NodeID> lqueue(queue);
+-    #pragma omp for
+-    for (NodeID n=0; n < g.num_nodes(); n++)
+-      if (bm.get_bit(n))
++#pragma omp for
++    for(NodeID n = 0; n < g.num_nodes(); n++)
++      if(bm.get_bit(n))
+         lqueue.push_back(n);
+     lqueue.flush();
+   }
+   queue.slide_window();
+ }
+ 
+-pvector<NodeID> InitParent(const Graph &g) {
++pvector<NodeID> InitParent(const Graph& g) {
+   pvector<NodeID> parent(g.num_nodes());
+-  #pragma omp parallel for
+-  for (NodeID n=0; n < g.num_nodes(); n++)
++#pragma omp parallel for
++  for(NodeID n = 0; n < g.num_nodes(); n++)
+     parent[n] = g.out_degree(n) != 0 ? -g.out_degree(n) : -1;
+   return parent;
+ }
+ 
+-pvector<NodeID> DOBFS(const Graph &g, NodeID source, int alpha = 15,
++pvector<NodeID> DOBFS(const Graph& g, NodeID source, int alpha = 15,
+                       int beta = 18) {
+-  PrintStep("Source", static_cast<int64_t>(source));
+-  Timer t;
+-  t.Start();
+   pvector<NodeID> parent = InitParent(g);
+-  t.Stop();
+-  PrintStep("i", t.Seconds());
+-  parent[source] = source;
++  parent[source]         = source;
+   SlidingQueue<NodeID> queue(g.num_nodes());
+   queue.push_back(source);
+   queue.slide_window();
+@@ -136,48 +131,40 @@ pvector<NodeID> DOBFS(const Graph &g, NodeID source, int alpha = 15,
+   Bitmap front(g.num_nodes());
+   front.reset();
+   int64_t edges_to_check = g.num_edges_directed();
+-  int64_t scout_count = g.out_degree(source);
+-  while (!queue.empty()) {
+-    if (scout_count > edges_to_check / alpha) {
++  int64_t scout_count    = g.out_degree(source);
++  while(!queue.empty()) {
++    if(scout_count > edges_to_check / alpha) {
+       int64_t awake_count, old_awake_count;
+-      TIME_OP(t, QueueToBitmap(queue, front));
+-      PrintStep("e", t.Seconds());
++      QueueToBitmap(queue, front);
+       awake_count = queue.size();
+       queue.slide_window();
+       do {
+-        t.Start();
+         old_awake_count = awake_count;
+-        awake_count = BUStep(g, parent, front, curr);
++        awake_count     = BUStep(g, parent, front, curr);
+         front.swap(curr);
+-        t.Stop();
+-        PrintStep("bu", t.Seconds(), awake_count);
+-      } while ((awake_count >= old_awake_count) ||
+-               (awake_count > g.num_nodes() / beta));
+-      TIME_OP(t, BitmapToQueue(g, front, queue));
+-      PrintStep("c", t.Seconds());
++      } while((awake_count >= old_awake_count) ||
++              (awake_count > g.num_nodes() / beta));
++      BitmapToQueue(g, front, queue);
+       scout_count = 1;
+     } else {
+-      t.Start();
+       edges_to_check -= scout_count;
+       scout_count = TDStep(g, parent, queue);
+       queue.slide_window();
+-      t.Stop();
+-      PrintStep("td", t.Seconds(), queue.size());
+     }
+   }
+-  #pragma omp parallel for
+-  for (NodeID n = 0; n < g.num_nodes(); n++)
+-    if (parent[n] < -1)
++#pragma omp parallel for
++  for(NodeID n = 0; n < g.num_nodes(); n++)
++    if(parent[n] < -1)
+       parent[n] = -1;
+   return parent;
+ }
+ 
+ 
+-void PrintBFSStats(const Graph &g, const pvector<NodeID> &bfs_tree) {
++void PrintBFSStats(const Graph& g, const pvector<NodeID>& bfs_tree) {
+   int64_t tree_size = 0;
+-  int64_t n_edges = 0;
+-  for (NodeID n : g.vertices()) {
+-    if (bfs_tree[n] >= 0) {
++  int64_t n_edges   = 0;
++  for(NodeID n : g.vertices()) {
++    if(bfs_tree[n] >= 0) {
+       n_edges += g.out_degree(n);
+       tree_size++;
+     }
+@@ -192,35 +179,34 @@ void PrintBFSStats(const Graph &g, const pvector<NodeID> &bfs_tree) {
+ // - parent[v] = u  =>  depth[v] = depth[u] + 1 (except for source)
+ // - parent[v] = u  => there is edge from u to v
+ // - all vertices reachable from source have a parent
+-bool BFSVerifier(const Graph &g, NodeID source,
+-                 const pvector<NodeID> &parent) {
++bool BFSVerifier(const Graph& g, NodeID source, const pvector<NodeID>& parent) {
+   pvector<int> depth(g.num_nodes(), -1);
+   depth[source] = 0;
+   vector<NodeID> to_visit;
+   to_visit.reserve(g.num_nodes());
+   to_visit.push_back(source);
+-  for (auto it = to_visit.begin(); it != to_visit.end(); it++) {
++  for(auto it = to_visit.begin(); it != to_visit.end(); it++) {
+     NodeID u = *it;
+-    for (NodeID v : g.out_neigh(u)) {
+-      if (depth[v] == -1) {
++    for(NodeID v : g.out_neigh(u)) {
++      if(depth[v] == -1) {
+         depth[v] = depth[u] + 1;
+         to_visit.push_back(v);
+       }
+     }
+   }
+-  for (NodeID u : g.vertices()) {
+-    if ((depth[u] != -1) && (parent[u] != -1)) {
+-      if (u == source) {
+-        if (!((parent[u] == u) && (depth[u] == 0))) {
++  for(NodeID u : g.vertices()) {
++    if((depth[u] != -1) && (parent[u] != -1)) {
++      if(u == source) {
++        if(!((parent[u] == u) && (depth[u] == 0))) {
+           cout << "Source wrong" << endl;
+           return false;
+         }
+         continue;
+       }
+       bool parent_found = false;
+-      for (NodeID v : g.in_neigh(u)) {
+-        if (v == parent[u]) {
+-          if (depth[v] != depth[u] - 1) {
++      for(NodeID v : g.in_neigh(u)) {
++        if(v == parent[u]) {
++          if(depth[v] != depth[u] - 1) {
+             cout << "Wrong depths for " << u << " & " << v << endl;
+             return false;
+           }
+@@ -228,11 +214,11 @@ bool BFSVerifier(const Graph &g, NodeID source,
+           break;
+         }
+       }
+-      if (!parent_found) {
++      if(!parent_found) {
+         cout << "Couldn't find edge from " << parent[u] << " to " << u << endl;
+         return false;
+       }
+-    } else if (depth[u] != parent[u]) {
++    } else if(depth[u] != parent[u]) {
+       cout << "Reachability mismatch" << endl;
+       return false;
+     }
+@@ -243,14 +229,14 @@ bool BFSVerifier(const Graph &g, NodeID source,
+ 
+ int main(int argc, char* argv[]) {
+   CLApp cli(argc, argv, "breadth-first search");
+-  if (!cli.ParseArgs())
++  if(!cli.ParseArgs())
+     return -1;
+-  Builder b(cli);
+-  Graph g = b.MakeGraph();
++  Builder             b(cli);
++  Graph               g = b.MakeGraph();
+   SourcePicker<Graph> sp(g, cli.start_vertex());
+-  auto BFSBound = [&sp] (const Graph &g) { return DOBFS(g, sp.PickNext()); };
++  auto BFSBound = [&sp](const Graph& g) { return DOBFS(g, sp.PickNext()); };
+   SourcePicker<Graph> vsp(g, cli.start_vertex());
+-  auto VerifierBound = [&vsp] (const Graph &g, const pvector<NodeID> &parent) {
++  auto VerifierBound = [&vsp](const Graph& g, const pvector<NodeID>& parent) {
+     return BFSVerifier(g, vsp.PickNext(), parent);
+   };
+   BenchmarkKernel(cli, g, BFSBound, PrintBFSStats, VerifierBound);
+diff --git a/src/bfs.cc.bak b/src/bfs.cc.bak
+new file mode 100644
+index 0000000..c1dfacd
+--- /dev/null
++++ b/src/bfs.cc.bak
+@@ -0,0 +1,243 @@
++// Copyright (c) 2015, The Regents of the University of California (Regents)
++// See LICENSE.txt for license details
++
++#include <iostream>
++#include <vector>
++
++#include "benchmark.h"
++#include "bitmap.h"
++#include "builder.h"
++#include "command_line.h"
++#include "graph.h"
++#include "platform_atomics.h"
++#include "pvector.h"
++#include "sliding_queue.h"
++#include "timer.h"
++
++
++/*
++GAP Benchmark Suite
++Kernel: Breadth-First Search (BFS)
++Author: Scott Beamer
++
++Will return parent array for a BFS traversal from a source vertex
++
++This BFS implementation makes use of the Direction-Optimizing approach [1].
++It uses the alpha and beta parameters to determine whether to switch search
++directions. For representing the frontier, it uses a SlidingQueue for the
++top-down approach and a Bitmap for the bottom-up approach. To reduce
++false-sharing for the top-down approach, thread-local QueueBuffer's are used.
++
++To save time computing the number of edges exiting the frontier, this
++implementation precomputes the degrees in bulk at the beginning by storing
++them in parent array as negative numbers. Thus the encoding of parent is:
++  parent[x] < 0 implies x is unvisited and parent[x] = -out_degree(x)
++  parent[x] >= 0 implies x been visited
++
++[1] Scott Beamer, Krste Asanović, and David Patterson. "Direction-Optimizing
++    Breadth-First Search." International Conference on High Performance
++    Computing, Networking, Storage and Analysis (SC), Salt Lake City, Utah,
++    November 2012.
++*/
++
++
++using namespace std;
++
++int64_t BUStep(const Graph &g, pvector<NodeID> &parent, Bitmap &front,
++               Bitmap &next) {
++  int64_t awake_count = 0;
++  next.reset();
++  #pragma omp parallel for reduction(+ : awake_count) schedule(dynamic, 1024)
++  for (NodeID u=0; u < g.num_nodes(); u++) {
++    if (parent[u] < 0) {
++      for (NodeID v : g.in_neigh(u)) {
++        if (front.get_bit(v)) {
++          parent[u] = v;
++          awake_count++;
++          next.set_bit(u);
++          break;
++        }
++      }
++    }
++  }
++  return awake_count;
++}
++
++
++int64_t TDStep(const Graph &g, pvector<NodeID> &parent,
++               SlidingQueue<NodeID> &queue) {
++  int64_t scout_count = 0;
++  #pragma omp parallel
++  {
++    QueueBuffer<NodeID> lqueue(queue);
++    #pragma omp for reduction(+ : scout_count)
++    for (auto q_iter = queue.begin(); q_iter < queue.end(); q_iter++) {
++      NodeID u = *q_iter;
++      for (NodeID v : g.out_neigh(u)) {
++        NodeID curr_val = parent[v];
++        if (curr_val < 0) {
++          if (compare_and_swap(parent[v], curr_val, u)) {
++            lqueue.push_back(v);
++            scout_count += -curr_val;
++          }
++        }
++      }
++    }
++    lqueue.flush();
++  }
++  return scout_count;
++}
++
++
++void QueueToBitmap(const SlidingQueue<NodeID> &queue, Bitmap &bm) {
++  #pragma omp parallel for
++  for (auto q_iter = queue.begin(); q_iter < queue.end(); q_iter++) {
++    NodeID u = *q_iter;
++    bm.set_bit_atomic(u);
++  }
++}
++
++void BitmapToQueue(const Graph &g, const Bitmap &bm,
++                   SlidingQueue<NodeID> &queue) {
++  #pragma omp parallel
++  {
++    QueueBuffer<NodeID> lqueue(queue);
++    #pragma omp for
++    for (NodeID n=0; n < g.num_nodes(); n++)
++      if (bm.get_bit(n))
++        lqueue.push_back(n);
++    lqueue.flush();
++  }
++  queue.slide_window();
++}
++
++pvector<NodeID> InitParent(const Graph &g) {
++  pvector<NodeID> parent(g.num_nodes());
++  #pragma omp parallel for
++  for (NodeID n=0; n < g.num_nodes(); n++)
++    parent[n] = g.out_degree(n) != 0 ? -g.out_degree(n) : -1;
++  return parent;
++}
++
++pvector<NodeID> DOBFS(const Graph &g, NodeID source, int alpha = 15,
++                      int beta = 18) {
++  pvector<NodeID> parent = InitParent(g);
++  parent[source] = source;
++  SlidingQueue<NodeID> queue(g.num_nodes());
++  queue.push_back(source);
++  queue.slide_window();
++  Bitmap curr(g.num_nodes());
++  curr.reset();
++  Bitmap front(g.num_nodes());
++  front.reset();
++  int64_t edges_to_check = g.num_edges_directed();
++  int64_t scout_count = g.out_degree(source);
++  while (!queue.empty()) {
++    if (scout_count > edges_to_check / alpha) {
++      int64_t awake_count, old_awake_count;
++      awake_count = queue.size();
++      queue.slide_window();
++      do {
++        old_awake_count = awake_count;
++        awake_count = BUStep(g, parent, front, curr);
++        front.swap(curr);
++      } while ((awake_count >= old_awake_count) ||
++               (awake_count > g.num_nodes() / beta));
++      scout_count = 1;
++    } else {
++      edges_to_check -= scout_count;
++      scout_count = TDStep(g, parent, queue);
++      queue.slide_window();
++    }
++  }
++  #pragma omp parallel for
++  for (NodeID n = 0; n < g.num_nodes(); n++)
++    if (parent[n] < -1)
++      parent[n] = -1;
++  return parent;
++}
++
++
++void PrintBFSStats(const Graph &g, const pvector<NodeID> &bfs_tree) {
++  int64_t tree_size = 0;
++  int64_t n_edges = 0;
++  for (NodeID n : g.vertices()) {
++    if (bfs_tree[n] >= 0) {
++      n_edges += g.out_degree(n);
++      tree_size++;
++    }
++  }
++  cout << "BFS Tree has " << tree_size << " nodes and ";
++  cout << n_edges << " edges" << endl;
++}
++
++
++// BFS verifier does a serial BFS from same source and asserts:
++// - parent[source] = source
++// - parent[v] = u  =>  depth[v] = depth[u] + 1 (except for source)
++// - parent[v] = u  => there is edge from u to v
++// - all vertices reachable from source have a parent
++bool BFSVerifier(const Graph &g, NodeID source,
++                 const pvector<NodeID> &parent) {
++  pvector<int> depth(g.num_nodes(), -1);
++  depth[source] = 0;
++  vector<NodeID> to_visit;
++  to_visit.reserve(g.num_nodes());
++  to_visit.push_back(source);
++  for (auto it = to_visit.begin(); it != to_visit.end(); it++) {
++    NodeID u = *it;
++    for (NodeID v : g.out_neigh(u)) {
++      if (depth[v] == -1) {
++        depth[v] = depth[u] + 1;
++        to_visit.push_back(v);
++      }
++    }
++  }
++  for (NodeID u : g.vertices()) {
++    if ((depth[u] != -1) && (parent[u] != -1)) {
++      if (u == source) {
++        if (!((parent[u] == u) && (depth[u] == 0))) {
++          cout << "Source wrong" << endl;
++          return false;
++        }
++        continue;
++      }
++      bool parent_found = false;
++      for (NodeID v : g.in_neigh(u)) {
++        if (v == parent[u]) {
++          if (depth[v] != depth[u] - 1) {
++            cout << "Wrong depths for " << u << " & " << v << endl;
++            return false;
++          }
++          parent_found = true;
++          break;
++        }
++      }
++      if (!parent_found) {
++        cout << "Couldn't find edge from " << parent[u] << " to " << u << endl;
++        return false;
++      }
++    } else if (depth[u] != parent[u]) {
++      cout << "Reachability mismatch" << endl;
++      return false;
++    }
++  }
++  return true;
++}
++
++
++int main(int argc, char* argv[]) {
++  CLApp cli(argc, argv, "breadth-first search");
++  if (!cli.ParseArgs())
++    return -1;
++  Builder b(cli);
++  Graph g = b.MakeGraph();
++  SourcePicker<Graph> sp(g, cli.start_vertex());
++  auto BFSBound = [&sp] (const Graph &g) { return DOBFS(g, sp.PickNext()); };
++  SourcePicker<Graph> vsp(g, cli.start_vertex());
++  auto VerifierBound = [&vsp] (const Graph &g, const pvector<NodeID> &parent) {
++    return BFSVerifier(g, vsp.PickNext(), parent);
++  };
++  BenchmarkKernel(cli, g, BFSBound, PrintBFSStats, VerifierBound);
++  return 0;
++}
+diff --git a/src/bitmap.h b/src/bitmap.h
+index aed75e0..3692125 100644
+--- a/src/bitmap.h
++++ b/src/bitmap.h
+@@ -24,46 +24,42 @@ class Bitmap {
+  public:
+   explicit Bitmap(size_t size) {
+     uint64_t num_words = (size + kBitsPerWord - 1) / kBitsPerWord;
+-    start_ = new uint64_t[num_words];
+-    end_ = start_ + num_words;
++    start_             = new uint64_t[num_words];
++    end_               = start_ + num_words;
+   }
+ 
+-  ~Bitmap() {
+-    delete[] start_;
+-  }
++  ~Bitmap() { delete[] start_; }
+ 
+-  void reset() {
+-    std::fill(start_, end_, 0);
+-  }
++  void reset() { std::fill(start_, end_, 0); }
+ 
+   void set_bit(size_t pos) {
+-    start_[word_offset(pos)] |= ((uint64_t) 1l << bit_offset(pos));
++    start_[word_offset(pos)] |= ((uint64_t)1l << bit_offset(pos));
+   }
+ 
+   void set_bit_atomic(size_t pos) {
+     uint64_t old_val, new_val;
+     do {
+       old_val = start_[word_offset(pos)];
+-      new_val = old_val | ((uint64_t) 1l << bit_offset(pos));
+-    } while (!compare_and_swap(start_[word_offset(pos)], old_val, new_val));
++      new_val = old_val | ((uint64_t)1l << bit_offset(pos));
++    } while(!compare_and_swap(start_[word_offset(pos)], old_val, new_val));
+   }
+ 
+   bool get_bit(size_t pos) const {
+     return (start_[word_offset(pos)] >> bit_offset(pos)) & 1l;
+   }
+ 
+-  void swap(Bitmap &other) {
++  void swap(Bitmap& other) {
+     std::swap(start_, other.start_);
+     std::swap(end_, other.end_);
+   }
+ 
+  private:
+-  uint64_t *start_;
+-  uint64_t *end_;
++  uint64_t* start_;
++  uint64_t* end_;
+ 
+   static const uint64_t kBitsPerWord = 64;
+-  static uint64_t word_offset(size_t n) { return n / kBitsPerWord; }
+-  static uint64_t bit_offset(size_t n) { return n & (kBitsPerWord - 1); }
++  static uint64_t       word_offset(size_t n) { return n / kBitsPerWord; }
++  static uint64_t       bit_offset(size_t n) { return n & (kBitsPerWord - 1); }
+ };
+ 
+ #endif  // BITMAP_H_
+diff --git a/src/builder.h b/src/builder.h
+index 6fd0198..58ddf48 100644
+--- a/src/builder.h
++++ b/src/builder.h
+@@ -38,56 +38,53 @@ template <typename NodeID_, typename DestID_ = NodeID_,
+           typename WeightT_ = NodeID_, bool invert = true>
+ class BuilderBase {
+   typedef EdgePair<NodeID_, DestID_> Edge;
+-  typedef pvector<Edge> EdgeList;
++  typedef pvector<Edge>              EdgeList;
+ 
+-  const CLBase &cli_;
+-  bool symmetrize_;
+-  bool needs_weights_;
+-  int64_t num_nodes_ = -1;
++  const CLBase& cli_;
++  bool          symmetrize_;
++  bool          needs_weights_;
++  int64_t       num_nodes_ = -1;
+ 
+  public:
+-  explicit BuilderBase(const CLBase &cli) : cli_(cli) {
+-    symmetrize_ = cli_.symmetrize();
++  explicit BuilderBase(const CLBase& cli) : cli_(cli) {
++    symmetrize_    = cli_.symmetrize();
+     needs_weights_ = !std::is_same<NodeID_, DestID_>::value;
+   }
+ 
+-  DestID_ GetSource(EdgePair<NodeID_, NodeID_> e) {
+-    return e.u;
+-  }
++  DestID_ GetSource(EdgePair<NodeID_, NodeID_> e) { return e.u; }
+ 
+   DestID_ GetSource(EdgePair<NodeID_, NodeWeight<NodeID_, WeightT_>> e) {
+     return NodeWeight<NodeID_, WeightT_>(e.u, e.v.w);
+   }
+ 
+-  NodeID_ FindMaxNodeID(const EdgeList &el) {
++  NodeID_ FindMaxNodeID(const EdgeList& el) {
+     NodeID_ max_seen = 0;
+-    #pragma omp parallel for reduction(max : max_seen)
+-    for (auto it = el.begin(); it < el.end(); it++) {
+-      Edge e = *it;
++#pragma omp parallel for reduction(max : max_seen)
++    for(auto it = el.begin(); it < el.end(); it++) {
++      Edge e   = *it;
+       max_seen = std::max(max_seen, e.u);
+-      max_seen = std::max(max_seen, (NodeID_) e.v);
++      max_seen = std::max(max_seen, (NodeID_)e.v);
+     }
+     return max_seen;
+   }
+ 
+-  pvector<NodeID_> CountDegrees(const EdgeList &el, bool transpose) {
++  pvector<NodeID_> CountDegrees(const EdgeList& el, bool transpose) {
+     pvector<NodeID_> degrees(num_nodes_, 0);
+-    #pragma omp parallel for
+-    for (auto it = el.begin(); it < el.end(); it++) {
++#pragma omp parallel for
++    for(auto it = el.begin(); it < el.end(); it++) {
+       Edge e = *it;
+-      if (symmetrize_ || (!symmetrize_ && !transpose))
++      if(symmetrize_ || (!symmetrize_ && !transpose))
+         fetch_and_add(degrees[e.u], 1);
+-      if (symmetrize_ || (!symmetrize_ && transpose))
+-        fetch_and_add(degrees[(NodeID_) e.v], 1);
++      if(symmetrize_ || (!symmetrize_ && transpose))
++        fetch_and_add(degrees[(NodeID_)e.v], 1);
+     }
+     return degrees;
+   }
+ 
+-  static
+-  pvector<SGOffset> PrefixSum(const pvector<NodeID_> &degrees) {
++  static pvector<SGOffset> PrefixSum(const pvector<NodeID_>& degrees) {
+     pvector<SGOffset> sums(degrees.size() + 1);
+-    SGOffset total = 0;
+-    for (size_t n=0; n < degrees.size(); n++) {
++    SGOffset          total = 0;
++    for(size_t n = 0; n < degrees.size(); n++) {
+       sums[n] = total;
+       total += degrees[n];
+     }
+@@ -95,32 +92,31 @@ class BuilderBase {
+     return sums;
+   }
+ 
+-  static
+-  pvector<SGOffset> ParallelPrefixSum(const pvector<NodeID_> &degrees) {
+-    const size_t block_size = 1<<20;
++  static pvector<SGOffset> ParallelPrefixSum(const pvector<NodeID_>& degrees) {
++    const size_t block_size = 1 << 20;
+     const size_t num_blocks = (degrees.size() + block_size - 1) / block_size;
+     pvector<SGOffset> local_sums(num_blocks);
+-    #pragma omp parallel for
+-    for (size_t block=0; block < num_blocks; block++) {
+-      SGOffset lsum = 0;
+-      size_t block_end = std::min((block + 1) * block_size, degrees.size());
+-      for (size_t i=block * block_size; i < block_end; i++)
++#pragma omp parallel for
++    for(size_t block = 0; block < num_blocks; block++) {
++      SGOffset lsum      = 0;
++      size_t   block_end = std::min((block + 1) * block_size, degrees.size());
++      for(size_t i = block * block_size; i < block_end; i++)
+         lsum += degrees[i];
+       local_sums[block] = lsum;
+     }
+-    pvector<SGOffset> bulk_prefix(num_blocks+1);
+-    SGOffset total = 0;
+-    for (size_t block=0; block < num_blocks; block++) {
++    pvector<SGOffset> bulk_prefix(num_blocks + 1);
++    SGOffset          total = 0;
++    for(size_t block = 0; block < num_blocks; block++) {
+       bulk_prefix[block] = total;
+       total += local_sums[block];
+     }
+     bulk_prefix[num_blocks] = total;
+     pvector<SGOffset> prefix(degrees.size() + 1);
+-    #pragma omp parallel for
+-    for (size_t block=0; block < num_blocks; block++) {
++#pragma omp parallel for
++    for(size_t block = 0; block < num_blocks; block++) {
+       SGOffset local_total = bulk_prefix[block];
+-      size_t block_end = std::min((block + 1) * block_size, degrees.size());
+-      for (size_t i=block * block_size; i < block_end; i++) {
++      size_t   block_end   = std::min((block + 1) * block_size, degrees.size());
++      for(size_t i = block * block_size; i < block_end; i++) {
+         prefix[i] = local_total;
+         local_total += degrees[i];
+       }
+@@ -131,47 +127,46 @@ class BuilderBase {
+ 
+   // Removes self-loops and redundant edges
+   // Side effect: neighbor IDs will be sorted
+-  void SquishCSR(const CSRGraph<NodeID_, DestID_, invert> &g, bool transpose,
++  void SquishCSR(const CSRGraph<NodeID_, DestID_, invert>& g, bool transpose,
+                  DestID_*** sq_index, DestID_** sq_neighs) {
+     pvector<NodeID_> diffs(g.num_nodes());
+-    DestID_ *n_start, *n_end;
+-    #pragma omp parallel for private(n_start, n_end)
+-    for (NodeID_ n=0; n < g.num_nodes(); n++) {
+-      if (transpose) {
++    DestID_ *        n_start, *n_end;
++#pragma omp parallel for private(n_start, n_end)
++    for(NodeID_ n = 0; n < g.num_nodes(); n++) {
++      if(transpose) {
+         n_start = g.in_neigh(n).begin();
+-        n_end = g.in_neigh(n).end();
++        n_end   = g.in_neigh(n).end();
+       } else {
+         n_start = g.out_neigh(n).begin();
+-        n_end = g.out_neigh(n).end();
++        n_end   = g.out_neigh(n).end();
+       }
+       std::sort(n_start, n_end);
+-      DestID_ *new_end = std::unique(n_start, n_end);
+-      new_end = std::remove(n_start, new_end, n);
+-      diffs[n] = new_end - n_start;
++      DestID_* new_end = std::unique(n_start, n_end);
++      new_end          = std::remove(n_start, new_end, n);
++      diffs[n]         = new_end - n_start;
+     }
+     pvector<SGOffset> sq_offsets = ParallelPrefixSum(diffs);
+-    *sq_neighs = new DestID_[sq_offsets[g.num_nodes()]];
++    *sq_neighs                   = new DestID_[sq_offsets[g.num_nodes()]];
+     *sq_index = CSRGraph<NodeID_, DestID_>::GenIndex(sq_offsets, *sq_neighs);
+-    #pragma omp parallel for private(n_start)
+-    for (NodeID_ n=0; n < g.num_nodes(); n++) {
+-      if (transpose)
++#pragma omp parallel for private(n_start)
++    for(NodeID_ n = 0; n < g.num_nodes(); n++) {
++      if(transpose)
+         n_start = g.in_neigh(n).begin();
+       else
+         n_start = g.out_neigh(n).begin();
+-      std::copy(n_start, n_start+diffs[n], (*sq_index)[n]);
++      std::copy(n_start, n_start + diffs[n], (*sq_index)[n]);
+     }
+   }
+ 
+   CSRGraph<NodeID_, DestID_, invert> SquishGraph(
+-      const CSRGraph<NodeID_, DestID_, invert> &g) {
++    const CSRGraph<NodeID_, DestID_, invert>& g) {
+     DestID_ **out_index, *out_neighs, **in_index, *in_neighs;
+     SquishCSR(g, false, &out_index, &out_neighs);
+-    if (g.directed()) {
+-      if (invert)
++    if(g.directed()) {
++      if(invert)
+         SquishCSR(g, true, &in_index, &in_neighs);
+-      return CSRGraph<NodeID_, DestID_, invert>(g.num_nodes(), out_index,
+-                                                out_neighs, in_index,
+-                                                in_neighs);
++      return CSRGraph<NodeID_, DestID_, invert>(
++        g.num_nodes(), out_index, out_neighs, in_index, in_neighs);
+     } else {
+       return CSRGraph<NodeID_, DestID_, invert>(g.num_nodes(), out_index,
+                                                 out_neighs);
+@@ -185,38 +180,38 @@ class BuilderBase {
+     - Allocate storage and set points according to offsets (GenIndex)
+     - Copy edges into storage
+   */
+-  void MakeCSR(const EdgeList &el, bool transpose, DestID_*** index,
++  void MakeCSR(const EdgeList& el, bool transpose, DestID_*** index,
+                DestID_** neighs) {
+-    pvector<NodeID_> degrees = CountDegrees(el, transpose);
++    pvector<NodeID_>  degrees = CountDegrees(el, transpose);
+     pvector<SGOffset> offsets = ParallelPrefixSum(degrees);
+-    *neighs = new DestID_[offsets[num_nodes_]];
++    *neighs                   = new DestID_[offsets[num_nodes_]];
+     *index = CSRGraph<NodeID_, DestID_>::GenIndex(offsets, *neighs);
+-    #pragma omp parallel for
+-    for (auto it = el.begin(); it < el.end(); it++) {
++#pragma omp parallel for
++    for(auto it = el.begin(); it < el.end(); it++) {
+       Edge e = *it;
+-      if (symmetrize_ || (!symmetrize_ && !transpose))
++      if(symmetrize_ || (!symmetrize_ && !transpose))
+         (*neighs)[fetch_and_add(offsets[e.u], 1)] = e.v;
+-      if (symmetrize_ || (!symmetrize_ && transpose))
++      if(symmetrize_ || (!symmetrize_ && transpose))
+         (*neighs)[fetch_and_add(offsets[static_cast<NodeID_>(e.v)], 1)] =
+-            GetSource(e);
++          GetSource(e);
+     }
+   }
+ 
+-  CSRGraph<NodeID_, DestID_, invert> MakeGraphFromEL(EdgeList &el) {
++  CSRGraph<NodeID_, DestID_, invert> MakeGraphFromEL(EdgeList& el) {
+     DestID_ **index = nullptr, **inv_index = nullptr;
+-    DestID_ *neighs = nullptr, *inv_neighs = nullptr;
+-    Timer t;
++    DestID_ * neighs = nullptr, *inv_neighs = nullptr;
++    Timer     t;
+     t.Start();
+-    if (num_nodes_ == -1)
+-      num_nodes_ = FindMaxNodeID(el)+1;
+-    if (needs_weights_)
++    if(num_nodes_ == -1)
++      num_nodes_ = FindMaxNodeID(el) + 1;
++    if(needs_weights_)
+       Generator<NodeID_, DestID_, WeightT_>::InsertWeights(el);
+     MakeCSR(el, false, &index, &neighs);
+-    if (!symmetrize_ && invert)
++    if(!symmetrize_ && invert)
+       MakeCSR(el, true, &inv_index, &inv_neighs);
+     t.Stop();
+     PrintTime("Build Time", t.Seconds());
+-    if (symmetrize_)
++    if(symmetrize_)
+       return CSRGraph<NodeID_, DestID_, invert>(num_nodes_, index, neighs);
+     else
+       return CSRGraph<NodeID_, DestID_, invert>(num_nodes_, index, neighs,
+@@ -227,14 +222,14 @@ class BuilderBase {
+     CSRGraph<NodeID_, DestID_, invert> g;
+     {  // extra scope to trigger earlier deletion of el (save memory)
+       EdgeList el;
+-      if (cli_.filename() != "") {
++      if(cli_.filename() != "") {
+         Reader<NodeID_, DestID_, WeightT_, invert> r(cli_.filename());
+-        if ((r.GetSuffix() == ".sg") || (r.GetSuffix() == ".wsg")) {
++        if((r.GetSuffix() == ".sg") || (r.GetSuffix() == ".wsg")) {
+           return r.ReadSerializedGraph();
+         } else {
+           el = r.ReadFile(needs_weights_);
+         }
+-      } else if (cli_.scale() != -1) {
++      } else if(cli_.scale() != -1) {
+         Generator<NodeID_, DestID_> gen(cli_.scale(), cli_.degree());
+         el = gen.GenerateEL(cli_.uniform());
+       }
+@@ -244,37 +239,36 @@ class BuilderBase {
+   }
+ 
+   // Relabels (and rebuilds) graph by order of decreasing degree
+-  static
+-  CSRGraph<NodeID_, DestID_, invert> RelabelByDegree(
+-      const CSRGraph<NodeID_, DestID_, invert> &g) {
+-    if (g.directed()) {
++  static CSRGraph<NodeID_, DestID_, invert> RelabelByDegree(
++    const CSRGraph<NodeID_, DestID_, invert>& g) {
++    if(g.directed()) {
+       std::cout << "Cannot relabel directed graph" << std::endl;
+       std::exit(-11);
+     }
+     Timer t;
+     t.Start();
+     typedef std::pair<int64_t, NodeID_> degree_node_p;
+-    pvector<degree_node_p> degree_id_pairs(g.num_nodes());
+-    #pragma omp parallel for
+-    for (NodeID_ n=0; n < g.num_nodes(); n++)
++    pvector<degree_node_p>              degree_id_pairs(g.num_nodes());
++#pragma omp parallel for
++    for(NodeID_ n = 0; n < g.num_nodes(); n++)
+       degree_id_pairs[n] = std::make_pair(g.out_degree(n), n);
+     std::sort(degree_id_pairs.begin(), degree_id_pairs.end(),
+               std::greater<degree_node_p>());
+     pvector<NodeID_> degrees(g.num_nodes());
+     pvector<NodeID_> new_ids(g.num_nodes());
+-    #pragma omp parallel for
+-    for (NodeID_ n=0; n < g.num_nodes(); n++) {
+-      degrees[n] = degree_id_pairs[n].first;
++#pragma omp parallel for
++    for(NodeID_ n = 0; n < g.num_nodes(); n++) {
++      degrees[n]                         = degree_id_pairs[n].first;
+       new_ids[degree_id_pairs[n].second] = n;
+     }
+     pvector<SGOffset> offsets = ParallelPrefixSum(degrees);
+-    DestID_* neighs = new DestID_[offsets[g.num_nodes()]];
++    DestID_*          neighs  = new DestID_[offsets[g.num_nodes()]];
+     DestID_** index = CSRGraph<NodeID_, DestID_>::GenIndex(offsets, neighs);
+-    #pragma omp parallel for
+-    for (NodeID_ u=0; u < g.num_nodes(); u++) {
+-      for (NodeID_ v : g.out_neigh(u))
++#pragma omp parallel for
++    for(NodeID_ u = 0; u < g.num_nodes(); u++) {
++      for(NodeID_ v : g.out_neigh(u))
+         neighs[offsets[new_ids[u]]++] = new_ids[v];
+-      std::sort(index[new_ids[u]], index[new_ids[u]+1]);
++      std::sort(index[new_ids[u]], index[new_ids[u] + 1]);
+     }
+     t.Stop();
+     PrintTime("Relabel", t.Seconds());
+diff --git a/src/cc.cc b/src/cc.cc
+index bf9d53e..e983aad 100644
+--- a/src/cc.cc
++++ b/src/cc.cc
+@@ -23,11 +23,11 @@ Authors: Michael Sutton, Scott Beamer
+ 
+ Will return comp array labelling each vertex with a connected component ID
+ 
+-This CC implementation makes use of the Afforest subgraph sampling algorithm [1],
+-which restructures and extends the Shiloach-Vishkin algorithm [2].
++This CC implementation makes use of the Afforest subgraph sampling algorithm
++[1], which restructures and extends the Shiloach-Vishkin algorithm [2].
+ 
+-[1] Michael Sutton, Tal Ben-Nun, and Amnon Barak. "Optimizing Parallel 
+-    Graph Connectivity Computation via Subgraph Sampling" Symposium on 
++[1] Michael Sutton, Tal Ben-Nun, and Amnon Barak. "Optimizing Parallel
++    Graph Connectivity Computation via Subgraph Sampling" Symposium on
+     Parallel and Distributed Processing, IPDPS 2018.
+ 
+ [2] Yossi Shiloach and Uzi Vishkin. "An o(logn) parallel connectivity algorithm"
+@@ -42,13 +42,13 @@ using namespace std;
+ void Link(NodeID u, NodeID v, pvector<NodeID>& comp) {
+   NodeID p1 = comp[u];
+   NodeID p2 = comp[v];
+-  while (p1 != p2) {
+-    NodeID high = p1 > p2 ? p1 : p2;
+-    NodeID low = p1 + (p2 - high);
++  while(p1 != p2) {
++    NodeID high   = p1 > p2 ? p1 : p2;
++    NodeID low    = p1 + (p2 - high);
+     NodeID p_high = comp[high];
+     // Was already 'low' or succeeded in writing 'low'
+-    if ((p_high == low) ||
+-        (p_high == high && compare_and_swap(comp[high], high, low)))
++    if((p_high == low) ||
++       (p_high == high && compare_and_swap(comp[high], high, low)))
+       break;
+     p1 = comp[comp[high]];
+     p2 = comp[low];
+@@ -57,10 +57,10 @@ void Link(NodeID u, NodeID v, pvector<NodeID>& comp) {
+ 
+ 
+ // Reduce depth of tree for each component to 1 by crawling up parents
+-void Compress(const Graph &g, pvector<NodeID>& comp) {
+-  #pragma omp parallel for schedule(dynamic, 16384)
+-  for (NodeID n = 0; n < g.num_nodes(); n++) {
+-    while (comp[n] != comp[comp[n]]) {
++void        Compress(const Graph& g, pvector<NodeID>& comp) {
++#pragma omp parallel for schedule(dynamic, 16384)
++  for(NodeID n = 0; n < g.num_nodes(); n++) {
++    while(comp[n] != comp[comp[n]]) {
+       comp[n] = comp[comp[n]];
+     }
+   }
+@@ -68,13 +68,13 @@ void Compress(const Graph &g, pvector<NodeID>& comp) {
+ 
+ 
+ NodeID SampleFrequentElement(const pvector<NodeID>& comp,
+-                             int64_t num_samples = 1024) {
++                             int64_t                num_samples = 1024) {
+   std::unordered_map<NodeID, int> sample_counts(32);
+   using kvp_type = std::unordered_map<NodeID, int>::value_type;
+   // Sample elements from 'comp'
+-  std::mt19937 gen;
++  std::mt19937                          gen;
+   std::uniform_int_distribution<NodeID> distribution(0, comp.size() - 1);
+-  for (NodeID i = 0; i < num_samples; i++) {
++  for(NodeID i = 0; i < num_samples; i++) {
+     NodeID n = distribution(gen);
+     sample_counts[comp[n]]++;
+   }
+@@ -83,28 +83,24 @@ NodeID SampleFrequentElement(const pvector<NodeID>& comp,
+     sample_counts.begin(), sample_counts.end(),
+     [](const kvp_type& a, const kvp_type& b) { return a.second < b.second; });
+   float frac_of_graph = static_cast<float>(most_frequent->second) / num_samples;
+-  std::cout
+-    << "Skipping largest intermediate component (ID: " << most_frequent->first
+-    << ", approx. " << static_cast<int>(frac_of_graph * 100)
+-    << "% of the graph)" << std::endl;
+   return most_frequent->first;
+ }
+ 
+ 
+-pvector<NodeID> Afforest(const Graph &g, int32_t neighbor_rounds = 2) {
++pvector<NodeID> Afforest(const Graph& g, int32_t neighbor_rounds = 2) {
+   pvector<NodeID> comp(g.num_nodes());
+ 
+-  // Initialize each node to a single-node self-pointing tree
+-  #pragma omp parallel for
+-  for (NodeID n = 0; n < g.num_nodes(); n++)
++// Initialize each node to a single-node self-pointing tree
++#pragma omp parallel for
++  for(NodeID n = 0; n < g.num_nodes(); n++)
+     comp[n] = n;
+ 
+   // Process a sparse sampled subgraph first for approximating components.
+   // Sample by processing a fixed number of neighbors for each node (see paper)
+-  for (int r = 0; r < neighbor_rounds; ++r) {
+-  #pragma omp parallel for schedule(dynamic,16384)
+-    for (NodeID u = 0; u < g.num_nodes(); u++) {
+-      for (NodeID v : g.out_neigh(u, r)) {
++  for(int r = 0; r < neighbor_rounds; ++r) {
++#pragma omp parallel for schedule(dynamic, 16384)
++    for(NodeID u = 0; u < g.num_nodes(); u++) {
++      for(NodeID v : g.out_neigh(u, r)) {
+         // Link at most one time if neighbor available at offset r
+         Link(u, v, comp);
+         break;
+@@ -118,27 +114,27 @@ pvector<NodeID> Afforest(const Graph &g, int32_t neighbor_rounds = 2) {
+   NodeID c = SampleFrequentElement(comp);
+ 
+   // Final 'link' phase over remaining edges (excluding largest component)
+-  if (!g.directed()) {
+-    #pragma omp parallel for schedule(dynamic, 16384)
+-    for (NodeID u = 0; u < g.num_nodes(); u++) {
++  if(!g.directed()) {
++#pragma omp parallel for schedule(dynamic, 16384)
++    for(NodeID u = 0; u < g.num_nodes(); u++) {
+       // Skip processing nodes in the largest component
+-      if (comp[u] == c)
++      if(comp[u] == c)
+         continue;
+       // Skip over part of neighborhood (determined by neighbor_rounds)
+-      for (NodeID v : g.out_neigh(u, neighbor_rounds)) {
++      for(NodeID v : g.out_neigh(u, neighbor_rounds)) {
+         Link(u, v, comp);
+       }
+     }
+   } else {
+-    #pragma omp parallel for schedule(dynamic, 16384)
+-    for (NodeID u = 0; u < g.num_nodes(); u++) {
+-      if (comp[u] == c)
++#pragma omp parallel for schedule(dynamic, 16384)
++    for(NodeID u = 0; u < g.num_nodes(); u++) {
++      if(comp[u] == c)
+         continue;
+-      for (NodeID v : g.out_neigh(u, neighbor_rounds)) {
++      for(NodeID v : g.out_neigh(u, neighbor_rounds)) {
+         Link(u, v, comp);
+       }
+       // To support directed graphs, process reverse graph completely
+-      for (NodeID v : g.in_neigh(u)) {
++      for(NodeID v : g.in_neigh(u)) {
+         Link(u, v, comp);
+       }
+     }
+@@ -149,20 +145,20 @@ pvector<NodeID> Afforest(const Graph &g, int32_t neighbor_rounds = 2) {
+ }
+ 
+ 
+-void PrintCompStats(const Graph &g, const pvector<NodeID> &comp) {
++void PrintCompStats(const Graph& g, const pvector<NodeID>& comp) {
+   cout << endl;
+   unordered_map<NodeID, NodeID> count;
+-  for (NodeID comp_i : comp)
++  for(NodeID comp_i : comp)
+     count[comp_i] += 1;
+-  int k = 5;
++  int                          k = 5;
+   vector<pair<NodeID, NodeID>> count_vector;
+   count_vector.reserve(count.size());
+-  for (auto kvp : count)
++  for(auto kvp : count)
+     count_vector.push_back(kvp);
+   vector<pair<NodeID, NodeID>> top_k = TopK(count_vector, k);
+-  k = min(k, static_cast<int>(top_k.size()));
++  k                                  = min(k, static_cast<int>(top_k.size()));
+   cout << k << " biggest clusters" << endl;
+-  for (auto kvp : top_k)
++  for(auto kvp : top_k)
+     cout << kvp.second << ":" << kvp.first << endl;
+   cout << "There are " << count.size() << " components" << endl;
+ }
+@@ -172,35 +168,35 @@ void PrintCompStats(const Graph &g, const pvector<NodeID> &comp) {
+ // - Asserts search does not reach a vertex with a different component label
+ // - If the graph is directed, it performs the search as if it was undirected
+ // - Asserts every vertex is visited (degree-0 vertex should have own label)
+-bool CCVerifier(const Graph &g, const pvector<NodeID> &comp) {
++bool CCVerifier(const Graph& g, const pvector<NodeID>& comp) {
+   unordered_map<NodeID, NodeID> label_to_source;
+-  for (NodeID n : g.vertices())
++  for(NodeID n : g.vertices())
+     label_to_source[comp[n]] = n;
+   Bitmap visited(g.num_nodes());
+   visited.reset();
+   vector<NodeID> frontier;
+   frontier.reserve(g.num_nodes());
+-  for (auto label_source_pair : label_to_source) {
++  for(auto label_source_pair : label_to_source) {
+     NodeID curr_label = label_source_pair.first;
+-    NodeID source = label_source_pair.second;
++    NodeID source     = label_source_pair.second;
+     frontier.clear();
+     frontier.push_back(source);
+     visited.set_bit(source);
+-    for (auto it = frontier.begin(); it != frontier.end(); it++) {
++    for(auto it = frontier.begin(); it != frontier.end(); it++) {
+       NodeID u = *it;
+-      for (NodeID v : g.out_neigh(u)) {
+-        if (comp[v] != curr_label)
++      for(NodeID v : g.out_neigh(u)) {
++        if(comp[v] != curr_label)
+           return false;
+-        if (!visited.get_bit(v)) {
++        if(!visited.get_bit(v)) {
+           visited.set_bit(v);
+           frontier.push_back(v);
+         }
+       }
+-      if (g.directed()) {
+-        for (NodeID v : g.in_neigh(u)) {
+-          if (comp[v] != curr_label)
++      if(g.directed()) {
++        for(NodeID v : g.in_neigh(u)) {
++          if(comp[v] != curr_label)
+             return false;
+-          if (!visited.get_bit(v)) {
++          if(!visited.get_bit(v)) {
+             visited.set_bit(v);
+             frontier.push_back(v);
+           }
+@@ -208,8 +204,8 @@ bool CCVerifier(const Graph &g, const pvector<NodeID> &comp) {
+       }
+     }
+   }
+-  for (NodeID n=0; n < g.num_nodes(); n++)
+-    if (!visited.get_bit(n))
++  for(NodeID n = 0; n < g.num_nodes(); n++)
++    if(!visited.get_bit(n))
+       return false;
+   return true;
+ }
+@@ -217,11 +213,11 @@ bool CCVerifier(const Graph &g, const pvector<NodeID> &comp) {
+ 
+ int main(int argc, char* argv[]) {
+   CLApp cli(argc, argv, "connected-components-afforest");
+-  if (!cli.ParseArgs())
++  if(!cli.ParseArgs())
+     return -1;
+   Builder b(cli);
+-  Graph g = b.MakeGraph();
+-  auto CCBound = [](const Graph& gr){ return Afforest(gr); };
++  Graph   g       = b.MakeGraph();
++  auto    CCBound = [](const Graph& gr) { return Afforest(gr); };
+   BenchmarkKernel(cli, g, CCBound, PrintCompStats, CCVerifier);
+   return 0;
+ }
+diff --git a/src/cc_sv.cc b/src/cc_sv.cc
+index eedef67..6e69297 100644
+--- a/src/cc_sv.cc
++++ b/src/cc_sv.cc
+@@ -47,34 +47,35 @@ using namespace std;
+ // The hooking condition (comp_u < comp_v) may not coincide with the edge's
+ // direction, so we use a min-max swap such that lower component IDs propagate
+ // independent of the edge's direction.
+-pvector<NodeID> ShiloachVishkin(const Graph &g) {
++pvector<NodeID> ShiloachVishkin(const Graph& g) {
+   pvector<NodeID> comp(g.num_nodes());
+-  #pragma omp parallel for
+-  for (NodeID n=0; n < g.num_nodes(); n++)
++#pragma omp parallel for
++  for(NodeID n = 0; n < g.num_nodes(); n++)
+     comp[n] = n;
+-  bool change = true;
+-  int num_iter = 0;
+-  while (change) {
++  bool change   = true;
++  int  num_iter = 0;
++  while(change) {
+     change = false;
+     num_iter++;
+-    #pragma omp parallel for
+-    for (NodeID u=0; u < g.num_nodes(); u++) {
+-      for (NodeID v : g.out_neigh(u)) {
++#pragma omp parallel for
++    for(NodeID u = 0; u < g.num_nodes(); u++) {
++      for(NodeID v : g.out_neigh(u)) {
+         NodeID comp_u = comp[u];
+         NodeID comp_v = comp[v];
+-        if (comp_u == comp_v) continue;
++        if(comp_u == comp_v)
++          continue;
+         // Hooking condition so lower component ID wins independent of direction
+         NodeID high_comp = comp_u > comp_v ? comp_u : comp_v;
+-        NodeID low_comp = comp_u + (comp_v - high_comp);
+-        if (high_comp == comp[high_comp]) {
+-          change = true;
++        NodeID low_comp  = comp_u + (comp_v - high_comp);
++        if(high_comp == comp[high_comp]) {
++          change          = true;
+           comp[high_comp] = low_comp;
+         }
+       }
+     }
+-    #pragma omp parallel for
+-    for (NodeID n=0; n < g.num_nodes(); n++) {
+-      while (comp[n] != comp[comp[n]]) {
++#pragma omp parallel for
++    for(NodeID n = 0; n < g.num_nodes(); n++) {
++      while(comp[n] != comp[comp[n]]) {
+         comp[n] = comp[comp[n]];
+       }
+     }
+@@ -84,20 +85,20 @@ pvector<NodeID> ShiloachVishkin(const Graph &g) {
+ }
+ 
+ 
+-void PrintCompStats(const Graph &g, const pvector<NodeID> &comp) {
++void PrintCompStats(const Graph& g, const pvector<NodeID>& comp) {
+   cout << endl;
+   unordered_map<NodeID, NodeID> count;
+-  for (NodeID comp_i : comp)
++  for(NodeID comp_i : comp)
+     count[comp_i] += 1;
+-  int k = 5;
++  int                          k = 5;
+   vector<pair<NodeID, NodeID>> count_vector;
+   count_vector.reserve(count.size());
+-  for (auto kvp : count)
++  for(auto kvp : count)
+     count_vector.push_back(kvp);
+   vector<pair<NodeID, NodeID>> top_k = TopK(count_vector, k);
+-  k = min(k, static_cast<int>(top_k.size()));
++  k                                  = min(k, static_cast<int>(top_k.size()));
+   cout << k << " biggest clusters" << endl;
+-  for (auto kvp : top_k)
++  for(auto kvp : top_k)
+     cout << kvp.second << ":" << kvp.first << endl;
+   cout << "There are " << count.size() << " components" << endl;
+ }
+@@ -107,35 +108,35 @@ void PrintCompStats(const Graph &g, const pvector<NodeID> &comp) {
+ // - Asserts search does not reach a vertex with a different component label
+ // - If the graph is directed, it performs the search as if it was undirected
+ // - Asserts every vertex is visited (degree-0 vertex should have own label)
+-bool CCVerifier(const Graph &g, const pvector<NodeID> &comp) {
++bool CCVerifier(const Graph& g, const pvector<NodeID>& comp) {
+   unordered_map<NodeID, NodeID> label_to_source;
+-  for (NodeID n : g.vertices())
++  for(NodeID n : g.vertices())
+     label_to_source[comp[n]] = n;
+   Bitmap visited(g.num_nodes());
+   visited.reset();
+   vector<NodeID> frontier;
+   frontier.reserve(g.num_nodes());
+-  for (auto label_source_pair : label_to_source) {
++  for(auto label_source_pair : label_to_source) {
+     NodeID curr_label = label_source_pair.first;
+-    NodeID source = label_source_pair.second;
++    NodeID source     = label_source_pair.second;
+     frontier.clear();
+     frontier.push_back(source);
+     visited.set_bit(source);
+-    for (auto it = frontier.begin(); it != frontier.end(); it++) {
++    for(auto it = frontier.begin(); it != frontier.end(); it++) {
+       NodeID u = *it;
+-      for (NodeID v : g.out_neigh(u)) {
+-        if (comp[v] != curr_label)
++      for(NodeID v : g.out_neigh(u)) {
++        if(comp[v] != curr_label)
+           return false;
+-        if (!visited.get_bit(v)) {
++        if(!visited.get_bit(v)) {
+           visited.set_bit(v);
+           frontier.push_back(v);
+         }
+       }
+-      if (g.directed()) {
+-        for (NodeID v : g.in_neigh(u)) {
+-          if (comp[v] != curr_label)
++      if(g.directed()) {
++        for(NodeID v : g.in_neigh(u)) {
++          if(comp[v] != curr_label)
+             return false;
+-          if (!visited.get_bit(v)) {
++          if(!visited.get_bit(v)) {
+             visited.set_bit(v);
+             frontier.push_back(v);
+           }
+@@ -143,8 +144,8 @@ bool CCVerifier(const Graph &g, const pvector<NodeID> &comp) {
+       }
+     }
+   }
+-  for (NodeID n=0; n < g.num_nodes(); n++)
+-    if (!visited.get_bit(n))
++  for(NodeID n = 0; n < g.num_nodes(); n++)
++    if(!visited.get_bit(n))
+       return false;
+   return true;
+ }
+@@ -152,10 +153,10 @@ bool CCVerifier(const Graph &g, const pvector<NodeID> &comp) {
+ 
+ int main(int argc, char* argv[]) {
+   CLApp cli(argc, argv, "connected-components");
+-  if (!cli.ParseArgs())
++  if(!cli.ParseArgs())
+     return -1;
+   Builder b(cli);
+-  Graph g = b.MakeGraph();
++  Graph   g = b.MakeGraph();
+   BenchmarkKernel(cli, g, ShiloachVishkin, PrintCompStats, CCVerifier);
+   return 0;
+ }
+diff --git a/src/command_line.h b/src/command_line.h
+index a719977..c54490b 100644
+--- a/src/command_line.h
++++ b/src/command_line.h
+@@ -27,34 +27,34 @@ Handles command line argument parsing
+ 
+ class CLBase {
+  protected:
+-  int argc_;
+-  char** argv_;
+-  std::string name_;
+-  std::string get_args_ = "f:g:hk:su:";
++  int                      argc_;
++  char**                   argv_;
++  std::string              name_;
++  std::string              get_args_ = "f:g:hk:su:";
+   std::vector<std::string> help_strings_;
+ 
+-  int scale_ = -1;
+-  int degree_ = 16;
+-  std::string filename_ = "";
+-  bool symmetrize_ = false;
+-  bool uniform_ = false;
++  int         scale_      = -1;
++  int         degree_     = 16;
++  std::string filename_   = "";
++  bool        symmetrize_ = false;
++  bool        uniform_    = false;
+ 
+   void AddHelpLine(char opt, std::string opt_arg, std::string text,
+                    std::string def = "") {
+     const int kBufLen = 100;
+-    char buf[kBufLen];
+-    if (opt_arg != "")
++    char      buf[kBufLen];
++    if(opt_arg != "")
+       opt_arg = "<" + opt_arg + ">";
+-    if (def != "")
++    if(def != "")
+       def = "[" + def + "]";
+     snprintf(buf, kBufLen, " -%c %-9s: %-54s%10s", opt, opt_arg.c_str(),
+-            text.c_str(), def.c_str());
++             text.c_str(), def.c_str());
+     help_strings_.push_back(buf);
+   }
+ 
+  public:
+   CLBase(int argc, char** argv, std::string name = "") :
+-         argc_(argc), argv_(argv), name_(name) {
++      argc_(argc), argv_(argv), name_(name) {
+     AddHelpLine('h', "", "print this help message");
+     AddHelpLine('f', "file", "load graph from file");
+     AddHelpLine('s', "", "symmetrize input edge list", "false");
+@@ -65,53 +65,65 @@ class CLBase {
+   }
+ 
+   bool ParseArgs() {
+-    signed char c_opt;
+-    extern char *optarg;          // from and for getopt
+-    while ((c_opt = getopt(argc_, argv_, get_args_.c_str())) != -1) {
++    signed char  c_opt;
++    extern char* optarg;  // from and for getopt
++    while((c_opt = getopt(argc_, argv_, get_args_.c_str())) != -1) {
+       HandleArg(c_opt, optarg);
+     }
+-    if ((filename_ == "") && (scale_ == -1)) {
++    if((filename_ == "") && (scale_ == -1)) {
+       std::cout << "No graph input specified. (Use -h for help)" << std::endl;
+       return false;
+     }
+-    if (scale_ != -1)
++    if(scale_ != -1)
+       symmetrize_ = true;
+     return true;
+   }
+ 
+   void virtual HandleArg(signed char opt, char* opt_arg) {
+-    switch (opt) {
+-      case 'f': filename_ = std::string(opt_arg);           break;
+-      case 'g': scale_ = atoi(opt_arg);                     break;
+-      case 'h': PrintUsage();                               break;
+-      case 'k': degree_ = atoi(opt_arg);                    break;
+-      case 's': symmetrize_ = true;                         break;
+-      case 'u': uniform_ = true; scale_ = atoi(opt_arg);    break;
++    switch(opt) {
++      case 'f':
++        filename_ = std::string(opt_arg);
++        break;
++      case 'g':
++        scale_ = atoi(opt_arg);
++        break;
++      case 'h':
++        PrintUsage();
++        break;
++      case 'k':
++        degree_ = atoi(opt_arg);
++        break;
++      case 's':
++        symmetrize_ = true;
++        break;
++      case 'u':
++        uniform_ = true;
++        scale_   = atoi(opt_arg);
++        break;
+     }
+   }
+ 
+   void PrintUsage() {
+     std::cout << name_ << std::endl;
+     // std::sort(help_strings_.begin(), help_strings_.end());
+-    for (std::string h : help_strings_)
++    for(std::string h : help_strings_)
+       std::cout << h << std::endl;
+     std::exit(0);
+   }
+ 
+-  int scale() const { return scale_; }
+-  int degree() const { return degree_; }
++  int         scale() const { return scale_; }
++  int         degree() const { return degree_; }
+   std::string filename() const { return filename_; }
+-  bool symmetrize() const { return symmetrize_; }
+-  bool uniform() const { return uniform_; }
++  bool        symmetrize() const { return symmetrize_; }
++  bool        uniform() const { return uniform_; }
+ };
+ 
+ 
+-
+ class CLApp : public CLBase {
+-  bool do_analysis_ = false;
+-  int num_trials_ = 16;
++  bool    do_analysis_  = false;
++  int     num_trials_   = 16;
+   int64_t start_vertex_ = -1;
+-  bool do_verify_ = false;
++  bool    do_verify_    = false;
+ 
+  public:
+   CLApp(int argc, char** argv, std::string name) : CLBase(argc, argv, name) {
+@@ -123,37 +135,48 @@ class CLApp : public CLBase {
+   }
+ 
+   void HandleArg(signed char opt, char* opt_arg) override {
+-    switch (opt) {
+-      case 'a': do_analysis_ = true;                    break;
+-      case 'n': num_trials_ = atoi(opt_arg);            break;
+-      case 'r': start_vertex_ = atol(opt_arg);          break;
+-      case 'v': do_verify_ = true;                      break;
+-      default: CLBase::HandleArg(opt, opt_arg);
++    switch(opt) {
++      case 'a':
++        do_analysis_ = true;
++        break;
++      case 'n':
++        num_trials_ = atoi(opt_arg);
++        break;
++      case 'r':
++        start_vertex_ = atol(opt_arg);
++        break;
++      case 'v':
++        do_verify_ = true;
++        break;
++      default:
++        CLBase::HandleArg(opt, opt_arg);
+     }
+   }
+ 
+-  bool do_analysis() const { return do_analysis_; }
+-  int num_trials() const { return num_trials_; }
++  bool    do_analysis() const { return do_analysis_; }
++  int     num_trials() const { return num_trials_; }
+   int64_t start_vertex() const { return start_vertex_; }
+-  bool do_verify() const { return do_verify_; }
++  bool    do_verify() const { return do_verify_; }
+ };
+ 
+ 
+-
+ class CLIterApp : public CLApp {
+   int num_iters_;
+ 
+  public:
+   CLIterApp(int argc, char** argv, std::string name, int num_iters) :
+-    CLApp(argc, argv, name), num_iters_(num_iters) {
++      CLApp(argc, argv, name), num_iters_(num_iters) {
+     get_args_ += "i:";
+     AddHelpLine('i', "i", "perform i iterations", std::to_string(num_iters_));
+   }
+ 
+   void HandleArg(signed char opt, char* opt_arg) override {
+-    switch (opt) {
+-      case 'i': num_iters_ = atoi(opt_arg);            break;
+-      default: CLApp::HandleArg(opt, opt_arg);
++    switch(opt) {
++      case 'i':
++        num_iters_ = atoi(opt_arg);
++        break;
++      default:
++        CLApp::HandleArg(opt, opt_arg);
+     }
+   }
+ 
+@@ -161,15 +184,15 @@ class CLIterApp : public CLApp {
+ };
+ 
+ 
+-
+ class CLPageRank : public CLApp {
+-  int max_iters_;
++  int    max_iters_;
+   double tolerance_;
+ 
+  public:
+   CLPageRank(int argc, char** argv, std::string name, double tolerance,
+              int max_iters) :
+-    CLApp(argc, argv, name), max_iters_(max_iters), tolerance_(tolerance) {
++      CLApp(argc, argv, name),
++      max_iters_(max_iters), tolerance_(tolerance) {
+     get_args_ += "i:t:";
+     AddHelpLine('i', "i", "perform at most i iterations",
+                 std::to_string(max_iters_));
+@@ -177,20 +200,24 @@ class CLPageRank : public CLApp {
+   }
+ 
+   void HandleArg(signed char opt, char* opt_arg) override {
+-    switch (opt) {
+-      case 'i': max_iters_ = atoi(opt_arg);            break;
+-      case 't': tolerance_ = std::stod(opt_arg);            break;
+-      default: CLApp::HandleArg(opt, opt_arg);
++    switch(opt) {
++      case 'i':
++        max_iters_ = atoi(opt_arg);
++        break;
++      case 't':
++        tolerance_ = std::stod(opt_arg);
++        break;
++      default:
++        CLApp::HandleArg(opt, opt_arg);
+     }
+   }
+ 
+-  int max_iters() const { return max_iters_; }
++  int    max_iters() const { return max_iters_; }
+   double tolerance() const { return tolerance_; }
+ };
+ 
+ 
+-
+-template<typename WeightT_>
++template <typename WeightT_>
+ class CLDelta : public CLApp {
+   WeightT_ delta_ = 1;
+ 
+@@ -201,14 +228,15 @@ class CLDelta : public CLApp {
+   }
+ 
+   void HandleArg(signed char opt, char* opt_arg) override {
+-    switch (opt) {
++    switch(opt) {
+       case 'd':
+-        if (std::is_floating_point<WeightT_>::value)
++        if(std::is_floating_point<WeightT_>::value)
+           delta_ = static_cast<WeightT_>(atof(opt_arg));
+         else
+           delta_ = static_cast<WeightT_>(atol(opt_arg));
+         break;
+-      default: CLApp::HandleArg(opt, opt_arg);
++      default:
++        CLApp::HandleArg(opt, opt_arg);
+     }
+   }
+ 
+@@ -216,16 +244,15 @@ class CLDelta : public CLApp {
+ };
+ 
+ 
+-
+ class CLConvert : public CLBase {
+   std::string out_filename_ = "";
+-  bool out_weighted_ = false;
+-  bool out_el_ = false;
+-  bool out_sg_ = false;
++  bool        out_weighted_ = false;
++  bool        out_el_       = false;
++  bool        out_sg_       = false;
+ 
+  public:
+-  CLConvert(int argc, char** argv, std::string name)
+-      : CLBase(argc, argv, name) {
++  CLConvert(int argc, char** argv, std::string name) :
++      CLBase(argc, argv, name) {
+     get_args_ += "e:b:w";
+     AddHelpLine('b', "file", "output serialized graph to file");
+     AddHelpLine('e', "file", "output edge list to file");
+@@ -233,18 +260,27 @@ class CLConvert : public CLBase {
+   }
+ 
+   void HandleArg(signed char opt, char* opt_arg) override {
+-    switch (opt) {
+-      case 'b': out_sg_ = true; out_filename_ = std::string(opt_arg);   break;
+-      case 'e': out_el_ = true; out_filename_ = std::string(opt_arg);   break;
+-      case 'w': out_weighted_ = true;                                   break;
+-      default: CLBase::HandleArg(opt, opt_arg);
++    switch(opt) {
++      case 'b':
++        out_sg_       = true;
++        out_filename_ = std::string(opt_arg);
++        break;
++      case 'e':
++        out_el_       = true;
++        out_filename_ = std::string(opt_arg);
++        break;
++      case 'w':
++        out_weighted_ = true;
++        break;
++      default:
++        CLBase::HandleArg(opt, opt_arg);
+     }
+   }
+ 
+   std::string out_filename() const { return out_filename_; }
+-  bool out_weighted() const { return out_weighted_; }
+-  bool out_el() const { return out_el_; }
+-  bool out_sg() const { return out_sg_; }
++  bool        out_weighted() const { return out_weighted_; }
++  bool        out_el() const { return out_el_; }
++  bool        out_sg() const { return out_sg_; }
+ };
+ 
+ #endif  // COMMAND_LINE_H_
+diff --git a/src/converter.cc b/src/converter.cc
+index 9615529..6f0b52e 100644
+--- a/src/converter.cc
++++ b/src/converter.cc
+@@ -15,15 +15,15 @@ using namespace std;
+ int main(int argc, char* argv[]) {
+   CLConvert cli(argc, argv, "converter");
+   cli.ParseArgs();
+-  if (cli.out_weighted()) {
++  if(cli.out_weighted()) {
+     WeightedBuilder bw(cli);
+-    WGraph wg = bw.MakeGraph();
++    WGraph          wg = bw.MakeGraph();
+     wg.PrintStats();
+     WeightedWriter ww(wg);
+     ww.WriteGraph(cli.out_filename(), cli.out_sg());
+   } else {
+     Builder b(cli);
+-    Graph g = b.MakeGraph();
++    Graph   g = b.MakeGraph();
+     g.PrintStats();
+     Writer w(g);
+     w.WriteGraph(cli.out_filename(), cli.out_sg());
+diff --git a/src/generator.h b/src/generator.h
+index 3127f4b..c858d2f 100644
+--- a/src/generator.h
++++ b/src/generator.h
+@@ -31,16 +31,16 @@ Given scale and degree, generates edgelist for synthetic graph
+ template <typename NodeID_, typename DestID_ = NodeID_,
+           typename WeightT_ = NodeID_>
+ class Generator {
+-  typedef EdgePair<NodeID_, DestID_> Edge;
++  typedef EdgePair<NodeID_, DestID_>                       Edge;
+   typedef EdgePair<NodeID_, NodeWeight<NodeID_, WeightT_>> WEdge;
+-  typedef pvector<Edge> EdgeList;
++  typedef pvector<Edge>                                    EdgeList;
+ 
+  public:
+   Generator(int scale, int degree) {
+-    scale_ = scale;
++    scale_     = scale;
+     num_nodes_ = 1l << scale;
+     num_edges_ = num_nodes_ * degree;
+-    if (num_nodes_ > std::numeric_limits<NodeID_>::max()) {
++    if(num_nodes_ > std::numeric_limits<NodeID_>::max()) {
+       std::cout << "NodeID type (max: " << std::numeric_limits<NodeID_>::max();
+       std::cout << ") too small to hold " << num_nodes_ << std::endl;
+       std::cout << "Recommend changing NodeID (typedef'd in src/benchmark.h)";
+@@ -49,28 +49,29 @@ class Generator {
+     }
+   }
+ 
+-  void PermuteIDs(EdgeList &el) {
++  void PermuteIDs(EdgeList& el) {
+     pvector<NodeID_> permutation(num_nodes_);
+-    std::mt19937 rng(kRandSeed);
+-    #pragma omp parallel for
+-    for (NodeID_ n=0; n < num_nodes_; n++)
++    std::mt19937     rng(kRandSeed);
++#pragma omp parallel for
++    for(NodeID_ n = 0; n < num_nodes_; n++)
+       permutation[n] = n;
+     shuffle(permutation.begin(), permutation.end(), rng);
+-    #pragma omp parallel for
+-    for (int64_t e=0; e < num_edges_; e++)
++#pragma omp parallel for
++    for(int64_t e = 0; e < num_edges_; e++)
+       el[e] = Edge(permutation[el[e].u], permutation[el[e].v]);
+   }
+ 
+   EdgeList MakeUniformEL() {
+     EdgeList el(num_edges_);
+-    #pragma omp parallel
++#pragma omp parallel
+     {
+-      std::mt19937 rng;
+-      std::uniform_int_distribution<NodeID_> udist(0, num_nodes_-1);
+-      #pragma omp for
+-      for (int64_t block=0; block < num_edges_; block+=block_size) {
+-        rng.seed(kRandSeed + block/block_size);
+-        for (int64_t e=block; e < std::min(block+block_size, num_edges_); e++) {
++      std::mt19937                           rng;
++      std::uniform_int_distribution<NodeID_> udist(0, num_nodes_ - 1);
++#pragma omp for
++      for(int64_t block = 0; block < num_edges_; block += block_size) {
++        rng.seed(kRandSeed + block / block_size);
++        for(int64_t e = block; e < std::min(block + block_size, num_edges_);
++            e++) {
+           el[e] = Edge(udist(rng), udist(rng));
+         }
+       }
+@@ -80,26 +81,27 @@ class Generator {
+ 
+   EdgeList MakeRMatEL() {
+     const float A = 0.57f, B = 0.19f, C = 0.19f;
+-    EdgeList el(num_edges_);
+-    #pragma omp parallel
++    EdgeList    el(num_edges_);
++#pragma omp parallel
+     {
+-      std::mt19937 rng;
++      std::mt19937                          rng;
+       std::uniform_real_distribution<float> udist(0, 1.0f);
+-      #pragma omp for
+-      for (int64_t block=0; block < num_edges_; block+=block_size) {
+-        rng.seed(kRandSeed + block/block_size);
+-        for (int64_t e=block; e < std::min(block+block_size, num_edges_); e++) {
++#pragma omp for
++      for(int64_t block = 0; block < num_edges_; block += block_size) {
++        rng.seed(kRandSeed + block / block_size);
++        for(int64_t e = block; e < std::min(block + block_size, num_edges_);
++            e++) {
+           NodeID_ src = 0, dst = 0;
+-          for (int depth=0; depth < scale_; depth++) {
++          for(int depth = 0; depth < scale_; depth++) {
+             float rand_point = udist(rng);
+-            src = src << 1;
+-            dst = dst << 1;
+-            if (rand_point < A+B) {
+-              if (rand_point > A)
++            src              = src << 1;
++            dst              = dst << 1;
++            if(rand_point < A + B) {
++              if(rand_point > A)
+                 dst++;
+             } else {
+               src++;
+-              if (rand_point > A+B+C)
++              if(rand_point > A + B + C)
+                 dst++;
+             }
+           }
+@@ -115,9 +117,9 @@ class Generator {
+ 
+   EdgeList GenerateEL(bool uniform) {
+     EdgeList el;
+-    Timer t;
++    Timer    t;
+     t.Start();
+-    if (uniform)
++    if(uniform)
+       el = MakeUniformEL();
+     else
+       el = MakeRMatEL();
+@@ -126,19 +128,19 @@ class Generator {
+     return el;
+   }
+ 
+-  static void InsertWeights(pvector<EdgePair<NodeID_, NodeID_>> &el) {}
++  static void InsertWeights(pvector<EdgePair<NodeID_, NodeID_>>& el) {}
+ 
+   // Overwrites existing weights with random from [1,255]
+-  static void InsertWeights(pvector<WEdge> &el) {
+-    #pragma omp parallel
++  static void InsertWeights(pvector<WEdge>& el) {
++#pragma omp parallel
+     {
+-      std::mt19937 rng;
++      std::mt19937                       rng;
+       std::uniform_int_distribution<int> udist(1, 255);
+-      int64_t el_size = el.size();
+-      #pragma omp for
+-      for (int64_t block=0; block < el_size; block+=block_size) {
+-        rng.seed(kRandSeed + block/block_size);
+-        for (int64_t e=block; e < std::min(block+block_size, el_size); e++) {
++      int64_t                            el_size = el.size();
++#pragma omp for
++      for(int64_t block = 0; block < el_size; block += block_size) {
++        rng.seed(kRandSeed + block / block_size);
++        for(int64_t e = block; e < std::min(block + block_size, el_size); e++) {
+           el[e].v.w = static_cast<WeightT_>(udist(rng));
+         }
+       }
+@@ -146,10 +148,10 @@ class Generator {
+   }
+ 
+  private:
+-  int scale_;
+-  int64_t num_nodes_;
+-  int64_t num_edges_;
+-  static const int64_t block_size = 1<<18;
++  int                  scale_;
++  int64_t              num_nodes_;
++  int64_t              num_edges_;
++  static const int64_t block_size = 1 << 18;
+ };
+ 
+ #endif  // GENERATOR_H_
+diff --git a/src/graph.h b/src/graph.h
+index eac9b5b..74e481d 100644
+--- a/src/graph.h
++++ b/src/graph.h
+@@ -29,33 +29,27 @@ Simple container for graph in CSR format
+ // Used to hold node & weight, with another node it makes a weighted edge
+ template <typename NodeID_, typename WeightT_>
+ struct NodeWeight {
+-  NodeID_ v;
++  NodeID_  v;
+   WeightT_ w;
+   NodeWeight() {}
+   NodeWeight(NodeID_ v) : v(v), w(1) {}
+   NodeWeight(NodeID_ v, WeightT_ w) : v(v), w(w) {}
+ 
+-  bool operator< (const NodeWeight& rhs) const {
++  bool operator<(const NodeWeight& rhs) const {
+     return v == rhs.v ? w < rhs.w : v < rhs.v;
+   }
+ 
+   // doesn't check WeightT_s, needed to remove duplicate edges
+-  bool operator== (const NodeWeight& rhs) const {
+-    return v == rhs.v;
+-  }
++  bool operator==(const NodeWeight& rhs) const { return v == rhs.v; }
+ 
+   // doesn't check WeightT_s, needed to remove self edges
+-  bool operator== (const NodeID_& rhs) const {
+-    return v == rhs;
+-  }
++  bool operator==(const NodeID_& rhs) const { return v == rhs; }
+ 
+-  operator NodeID_() {
+-    return v;
+-  }
++  operator NodeID_() { return v; }
+ };
+ 
+ template <typename NodeID_, typename WeightT_>
+-std::ostream& operator<<(std::ostream& os,
++std::ostream& operator<<(std::ostream&                        os,
+                          const NodeWeight<NodeID_, WeightT_>& nw) {
+   os << nw.v << " " << nw.w;
+   return os;
+@@ -68,7 +62,6 @@ std::istream& operator>>(std::istream& is, NodeWeight<NodeID_, WeightT_>& nw) {
+ }
+ 
+ 
+-
+ // Syntatic sugar for an edge
+ template <typename SrcT, typename DstT = SrcT>
+ struct EdgePair {
+@@ -81,10 +74,9 @@ struct EdgePair {
+ };
+ 
+ // SG = serialized graph, these types are for writing graph to file
+-typedef int32_t SGID;
++typedef int32_t        SGID;
+ typedef EdgePair<SGID> SGEdge;
+-typedef int64_t SGOffset;
+-
++typedef int64_t        SGOffset;
+ 
+ 
+ template <class NodeID_, class DestID_ = NodeID_, bool MakeInverse = true>
+@@ -94,113 +86,106 @@ class CSRGraph {
+ 
+   // Used to access neighbors of vertex, basically sugar for iterators
+   class Neighborhood {
+-    NodeID_ n_;
++    NodeID_   n_;
+     DestID_** g_index_;
+-    OffsetT start_offset_;
++    OffsetT   start_offset_;
++
+    public:
+     Neighborhood(NodeID_ n, DestID_** g_index, OffsetT start_offset) :
+         n_(n), g_index_(g_index), start_offset_(0) {
+       OffsetT max_offset = end() - begin();
+-      start_offset_ = std::min(start_offset, max_offset);
++      start_offset_      = std::min(start_offset, max_offset);
+     }
+     typedef DestID_* iterator;
+-    iterator begin() { return g_index_[n_] + start_offset_; }
+-    iterator end()   { return g_index_[n_+1]; }
++    iterator         begin() { return g_index_[n_] + start_offset_; }
++    iterator         end() { return g_index_[n_ + 1]; }
+   };
+ 
+   void ReleaseResources() {
+-    if (out_index_ != nullptr)
++    if(out_index_ != nullptr)
+       delete[] out_index_;
+-    if (out_neighbors_ != nullptr)
++    if(out_neighbors_ != nullptr)
+       delete[] out_neighbors_;
+-    if (directed_) {
+-      if (in_index_ != nullptr)
++    if(directed_) {
++      if(in_index_ != nullptr)
+         delete[] in_index_;
+-      if (in_neighbors_ != nullptr)
++      if(in_neighbors_ != nullptr)
+         delete[] in_neighbors_;
+     }
+   }
+ 
+ 
+  public:
+-  CSRGraph() : directed_(false), num_nodes_(-1), num_edges_(-1),
+-    out_index_(nullptr), out_neighbors_(nullptr),
+-    in_index_(nullptr), in_neighbors_(nullptr) {}
++  CSRGraph() :
++      directed_(false), num_nodes_(-1), num_edges_(-1), out_index_(nullptr),
++      out_neighbors_(nullptr), in_index_(nullptr), in_neighbors_(nullptr) {}
+ 
+   CSRGraph(int64_t num_nodes, DestID_** index, DestID_* neighs) :
+-    directed_(false), num_nodes_(num_nodes),
+-    out_index_(index), out_neighbors_(neighs),
+-    in_index_(index), in_neighbors_(neighs) {
+-      num_edges_ = (out_index_[num_nodes_] - out_index_[0]) / 2;
+-    }
++      directed_(false), num_nodes_(num_nodes), out_index_(index),
++      out_neighbors_(neighs), in_index_(index), in_neighbors_(neighs) {
++    num_edges_ = (out_index_[num_nodes_] - out_index_[0]) / 2;
++  }
+ 
+   CSRGraph(int64_t num_nodes, DestID_** out_index, DestID_* out_neighs,
+-        DestID_** in_index, DestID_* in_neighs) :
+-    directed_(true), num_nodes_(num_nodes),
+-    out_index_(out_index), out_neighbors_(out_neighs),
+-    in_index_(in_index), in_neighbors_(in_neighs) {
+-      num_edges_ = out_index_[num_nodes_] - out_index_[0];
+-    }
+-
+-  CSRGraph(CSRGraph&& other) : directed_(other.directed_),
+-    num_nodes_(other.num_nodes_), num_edges_(other.num_edges_),
+-    out_index_(other.out_index_), out_neighbors_(other.out_neighbors_),
+-    in_index_(other.in_index_), in_neighbors_(other.in_neighbors_) {
+-      other.num_edges_ = -1;
+-      other.num_nodes_ = -1;
+-      other.out_index_ = nullptr;
+-      other.out_neighbors_ = nullptr;
+-      other.in_index_ = nullptr;
+-      other.in_neighbors_ = nullptr;
++           DestID_** in_index, DestID_* in_neighs) :
++      directed_(true),
++      num_nodes_(num_nodes), out_index_(out_index), out_neighbors_(out_neighs),
++      in_index_(in_index), in_neighbors_(in_neighs) {
++    num_edges_ = out_index_[num_nodes_] - out_index_[0];
+   }
+ 
+-  ~CSRGraph() {
+-    ReleaseResources();
++  CSRGraph(CSRGraph&& other) :
++      directed_(other.directed_), num_nodes_(other.num_nodes_),
++      num_edges_(other.num_edges_), out_index_(other.out_index_),
++      out_neighbors_(other.out_neighbors_), in_index_(other.in_index_),
++      in_neighbors_(other.in_neighbors_) {
++    other.num_edges_     = -1;
++    other.num_nodes_     = -1;
++    other.out_index_     = nullptr;
++    other.out_neighbors_ = nullptr;
++    other.in_index_      = nullptr;
++    other.in_neighbors_  = nullptr;
+   }
+ 
++  ~CSRGraph() { ReleaseResources(); }
++
+   CSRGraph& operator=(CSRGraph&& other) {
+-    if (this != &other) {
++    if(this != &other) {
+       ReleaseResources();
+-      directed_ = other.directed_;
+-      num_edges_ = other.num_edges_;
+-      num_nodes_ = other.num_nodes_;
+-      out_index_ = other.out_index_;
+-      out_neighbors_ = other.out_neighbors_;
+-      in_index_ = other.in_index_;
+-      in_neighbors_ = other.in_neighbors_;
+-      other.num_edges_ = -1;
+-      other.num_nodes_ = -1;
+-      other.out_index_ = nullptr;
++      directed_            = other.directed_;
++      num_edges_           = other.num_edges_;
++      num_nodes_           = other.num_nodes_;
++      out_index_           = other.out_index_;
++      out_neighbors_       = other.out_neighbors_;
++      in_index_            = other.in_index_;
++      in_neighbors_        = other.in_neighbors_;
++      other.num_edges_     = -1;
++      other.num_nodes_     = -1;
++      other.out_index_     = nullptr;
+       other.out_neighbors_ = nullptr;
+-      other.in_index_ = nullptr;
+-      other.in_neighbors_ = nullptr;
++      other.in_index_      = nullptr;
++      other.in_neighbors_  = nullptr;
+     }
+     return *this;
+   }
+ 
+-  bool directed() const {
+-    return directed_;
+-  }
++  bool directed() const { return directed_; }
+ 
+-  int64_t num_nodes() const {
+-    return num_nodes_;
+-  }
++  int64_t num_nodes() const { return num_nodes_; }
+ 
+-  int64_t num_edges() const {
+-    return num_edges_;
+-  }
++  int64_t num_edges() const { return num_edges_; }
+ 
+   int64_t num_edges_directed() const {
+-    return directed_ ? num_edges_ : 2*num_edges_;
++    return directed_ ? num_edges_ : 2 * num_edges_;
+   }
+ 
+   int64_t out_degree(NodeID_ v) const {
+-    return out_index_[v+1] - out_index_[v];
++    return out_index_[v + 1] - out_index_[v];
+   }
+ 
+   int64_t in_degree(NodeID_ v) const {
+     static_assert(MakeInverse, "Graph inversion disabled but reading inverse");
+-    return in_index_[v+1] - in_index_[v];
++    return in_index_[v + 1] - in_index_[v];
+   }
+ 
+   Neighborhood out_neigh(NodeID_ n, OffsetT start_offset = 0) const {
+@@ -213,51 +198,49 @@ class CSRGraph {
+   }
+ 
+   void PrintStats() const {
+-    std::cout << "Graph has " << num_nodes_ << " nodes and "
+-              << num_edges_ << " ";
+-    if (!directed_)
++    std::cout << "Graph has " << num_nodes_ << " nodes and " << num_edges_
++              << " ";
++    if(!directed_)
+       std::cout << "un";
+     std::cout << "directed edges for degree: ";
+-    std::cout << num_edges_/num_nodes_ << std::endl;
++    std::cout << num_edges_ / num_nodes_ << std::endl;
+   }
+ 
+   void PrintTopology() const {
+-    for (NodeID_ i=0; i < num_nodes_; i++) {
++    for(NodeID_ i = 0; i < num_nodes_; i++) {
+       std::cout << i << ": ";
+-      for (DestID_ j : out_neigh(i)) {
++      for(DestID_ j : out_neigh(i)) {
+         std::cout << j << " ";
+       }
+       std::cout << std::endl;
+     }
+   }
+ 
+-  static DestID_** GenIndex(const pvector<SGOffset> &offsets, DestID_* neighs) {
+-    NodeID_ length = offsets.size();
+-    DestID_** index = new DestID_*[length];
+-    #pragma omp parallel for
+-    for (NodeID_ n=0; n < length; n++)
++  static DestID_** GenIndex(const pvector<SGOffset>& offsets, DestID_* neighs) {
++    NodeID_   length = offsets.size();
++    DestID_** index  = new DestID_*[length];
++#pragma omp parallel for
++    for(NodeID_ n = 0; n < length; n++)
+       index[n] = neighs + offsets[n];
+     return index;
+   }
+ 
+   pvector<SGOffset> VertexOffsets(bool in_graph = false) const {
+-    pvector<SGOffset> offsets(num_nodes_+1);
+-    for (NodeID_ n=0; n < num_nodes_+1; n++)
+-      if (in_graph)
++    pvector<SGOffset> offsets(num_nodes_ + 1);
++    for(NodeID_ n = 0; n < num_nodes_ + 1; n++)
++      if(in_graph)
+         offsets[n] = in_index_[n] - in_index_[0];
+       else
+         offsets[n] = out_index_[n] - out_index_[0];
+     return offsets;
+   }
+ 
+-  Range<NodeID_> vertices() const {
+-    return Range<NodeID_>(num_nodes());
+-  }
++  Range<NodeID_> vertices() const { return Range<NodeID_>(num_nodes()); }
+ 
+  private:
+-  bool directed_;
+-  int64_t num_nodes_;
+-  int64_t num_edges_;
++  bool      directed_;
++  int64_t   num_nodes_;
++  int64_t   num_edges_;
+   DestID_** out_index_;
+   DestID_*  out_neighbors_;
+   DestID_** in_index_;
+diff --git a/src/platform_atomics.h b/src/platform_atomics.h
+index 3e28348..5ade997 100644
+--- a/src/platform_atomics.h
++++ b/src/platform_atomics.h
+@@ -17,112 +17,116 @@ Wrappers for compiler intrinsics for atomic memory operations (AMOs)
+ 
+ #if defined _OPENMP
+ 
+-  #if defined __GNUC__
++#if defined __GNUC__
+ 
+-    // gcc/clang/icc instrinsics
+-
+-    template<typename T, typename U>
+-    T fetch_and_add(T &x, U inc) {
+-      return __sync_fetch_and_add(&x, inc);
+-    }
+-
+-    template<typename T>
+-    bool compare_and_swap(T &x, const T &old_val, const T &new_val) {
+-      return __sync_bool_compare_and_swap(&x, old_val, new_val);
+-    }
+-
+-    template<>
+-    bool compare_and_swap(float &x, const float &old_val, const float &new_val) {
+-      return __sync_bool_compare_and_swap(reinterpret_cast<uint32_t*>(&x),
+-                                          reinterpret_cast<const uint32_t&>(old_val),
+-                                          reinterpret_cast<const uint32_t&>(new_val));
+-    }
+-
+-    template<>
+-    bool compare_and_swap(double &x, const double &old_val, const double &new_val) {
+-      return __sync_bool_compare_and_swap(reinterpret_cast<uint64_t*>(&x),
+-                                          reinterpret_cast<const uint64_t&>(old_val),
+-                                          reinterpret_cast<const uint64_t&>(new_val));
+-    }
+-
+-  #elif __SUNPRO_CC
+-
+-    // sunCC (solaris sun studio) intrinsics
+-    // less general, only work for int32_t, int64_t, uint32_t, uint64_t
+-    // http://docs.oracle.com/cd/E19253-01/816-5168/6mbb3hr06/index.html
+-
+-    #include <atomic.h>
+-    #include <cinttypes>
+-
+-    int32_t fetch_and_add(int32_t &x, int32_t inc) {
+-      return atomic_add_32_nv((volatile uint32_t*) &x, inc) - inc;
+-    }
+-
+-    int64_t fetch_and_add(int64_t &x, int64_t inc) {
+-      return atomic_add_64_nv((volatile uint64_t*) &x, inc) - inc;
+-    }
+-
+-    uint32_t fetch_and_add(uint32_t &x, uint32_t inc) {
+-      return atomic_add_32_nv((volatile uint32_t*) &x, inc) - inc;
+-    }
+-
+-    uint64_t fetch_and_add(uint64_t &x, uint64_t inc) {
+-      return atomic_add_64_nv((volatile uint64_t*) &x, inc) - inc;
+-    }
+-
+-    bool compare_and_swap(int32_t &x, const int32_t &old_val, const int32_t &new_val) {
+-      return old_val == atomic_cas_32((volatile uint32_t*) &x, old_val, new_val);
+-    }
+-
+-    bool compare_and_swap(int64_t &x, const int64_t &old_val, const int64_t &new_val) {
+-      return old_val == atomic_cas_64((volatile uint64_t*) &x, old_val, new_val);
+-    }
+-
+-    bool compare_and_swap(uint32_t &x, const uint32_t &old_val, const uint32_t &new_val) {
+-      return old_val == atomic_cas_32((volatile uint32_t*) &x, old_val, new_val);
+-    }
+-
+-    bool compare_and_swap(uint64_t &x, const uint64_t &old_val, const uint64_t &new_val) {
+-      return old_val == atomic_cas_64((volatile uint64_t*) &x, old_val, new_val);
+-    }
+-
+-    bool compare_and_swap(float &x, const float &old_val, const float &new_val) {
+-      return old_val == atomic_cas_32((volatile uint32_t*) &x,
+-                                      (const volatile uint32_t&) old_val,
+-                                      (const volatile uint32_t&) new_val);
+-    }
+-
+-    bool compare_and_swap(double &x, const double &old_val, const double &new_val) {
+-      return old_val == atomic_cas_64((volatile uint64_t*) &x,
+-                                      (const volatile uint64_t&) old_val,
+-                                      (const volatile uint64_t&) new_val);
+-    }
+-
+-  #else   // defined __GNUC__ __SUNPRO_CC
+-
+-    #error No atomics available for this compiler but using OpenMP
+-
+-  #endif  // else defined __GNUC__ __SUNPRO_CC
+-
+-#else   // defined _OPENMP
+-
+-  // serial fallbacks
+-
+-  template<typename T, typename U>
+-  T fetch_and_add(T &x, U inc) {
+-    T orig_val = x;
+-    x += inc;
+-    return orig_val;
+-  }
+-
+-  template<typename T>
+-  bool compare_and_swap(T &x, const T &old_val, const T &new_val) {
+-    if (x == old_val) {
+-      x = new_val;
+-      return true;
+-    }
+-    return false;
++// gcc/clang/icc instrinsics
++
++template <typename T, typename U>
++T fetch_and_add(T& x, U inc) {
++  return __sync_fetch_and_add(&x, inc);
++}
++
++template <typename T>
++bool compare_and_swap(T& x, const T& old_val, const T& new_val) {
++  return __sync_bool_compare_and_swap(&x, old_val, new_val);
++}
++
++template <>
++bool compare_and_swap(float& x, const float& old_val, const float& new_val) {
++  return __sync_bool_compare_and_swap(
++    reinterpret_cast<uint32_t*>(&x), reinterpret_cast<const uint32_t&>(old_val),
++    reinterpret_cast<const uint32_t&>(new_val));
++}
++
++template <>
++bool compare_and_swap(double& x, const double& old_val, const double& new_val) {
++  return __sync_bool_compare_and_swap(
++    reinterpret_cast<uint64_t*>(&x), reinterpret_cast<const uint64_t&>(old_val),
++    reinterpret_cast<const uint64_t&>(new_val));
++}
++
++#elif __SUNPRO_CC
++
++// sunCC (solaris sun studio) intrinsics
++// less general, only work for int32_t, int64_t, uint32_t, uint64_t
++// http://docs.oracle.com/cd/E19253-01/816-5168/6mbb3hr06/index.html
++
++#include <atomic.h>
++#include <cinttypes>
++
++int32_t fetch_and_add(int32_t& x, int32_t inc) {
++  return atomic_add_32_nv((volatile uint32_t*)&x, inc) - inc;
++}
++
++int64_t fetch_and_add(int64_t& x, int64_t inc) {
++  return atomic_add_64_nv((volatile uint64_t*)&x, inc) - inc;
++}
++
++uint32_t fetch_and_add(uint32_t& x, uint32_t inc) {
++  return atomic_add_32_nv((volatile uint32_t*)&x, inc) - inc;
++}
++
++uint64_t fetch_and_add(uint64_t& x, uint64_t inc) {
++  return atomic_add_64_nv((volatile uint64_t*)&x, inc) - inc;
++}
++
++bool compare_and_swap(int32_t& x, const int32_t& old_val,
++                      const int32_t& new_val) {
++  return old_val == atomic_cas_32((volatile uint32_t*)&x, old_val, new_val);
++}
++
++bool compare_and_swap(int64_t& x, const int64_t& old_val,
++                      const int64_t& new_val) {
++  return old_val == atomic_cas_64((volatile uint64_t*)&x, old_val, new_val);
++}
++
++bool compare_and_swap(uint32_t& x, const uint32_t& old_val,
++                      const uint32_t& new_val) {
++  return old_val == atomic_cas_32((volatile uint32_t*)&x, old_val, new_val);
++}
++
++bool compare_and_swap(uint64_t& x, const uint64_t& old_val,
++                      const uint64_t& new_val) {
++  return old_val == atomic_cas_64((volatile uint64_t*)&x, old_val, new_val);
++}
++
++bool compare_and_swap(float& x, const float& old_val, const float& new_val) {
++  return old_val == atomic_cas_32((volatile uint32_t*)&x,
++                                  (const volatile uint32_t&)old_val,
++                                  (const volatile uint32_t&)new_val);
++}
++
++bool compare_and_swap(double& x, const double& old_val, const double& new_val) {
++  return old_val == atomic_cas_64((volatile uint64_t*)&x,
++                                  (const volatile uint64_t&)old_val,
++                                  (const volatile uint64_t&)new_val);
++}
++
++#else  // defined __GNUC__ __SUNPRO_CC
++
++#error No atomics available for this compiler but using OpenMP
++
++#endif  // else defined __GNUC__ __SUNPRO_CC
++
++#else  // defined _OPENMP
++
++// serial fallbacks
++
++template <typename T, typename U>
++T fetch_and_add(T& x, U inc) {
++  T orig_val = x;
++  x += inc;
++  return orig_val;
++}
++
++template <typename T>
++bool compare_and_swap(T& x, const T& old_val, const T& new_val) {
++  if(x == old_val) {
++    x = new_val;
++    return true;
+   }
++  return false;
++}
+ 
+ #endif  // else defined _OPENMP
+ 
+diff --git a/src/pr.cc b/src/pr.cc
+index f7d2d7f..7930200 100644
+--- a/src/pr.cc
++++ b/src/pr.cc
+@@ -29,62 +29,61 @@ updates in the pull direction to remove the need for atomics.
+ using namespace std;
+ 
+ typedef float ScoreT;
+-const float kDamp = 0.85;
++const float   kDamp = 0.85;
+ 
+-pvector<ScoreT> PageRankPull(const Graph &g, int max_iters,
++pvector<ScoreT> PageRankPull(const Graph& g, int max_iters,
+                              double epsilon = 0) {
+-  const ScoreT init_score = 1.0f / g.num_nodes();
+-  const ScoreT base_score = (1.0f - kDamp) / g.num_nodes();
++  const ScoreT    init_score = 1.0f / g.num_nodes();
++  const ScoreT    base_score = (1.0f - kDamp) / g.num_nodes();
+   pvector<ScoreT> scores(g.num_nodes(), init_score);
+   pvector<ScoreT> outgoing_contrib(g.num_nodes());
+-  for (int iter=0; iter < max_iters; iter++) {
++  for(int iter = 0; iter < max_iters; iter++) {
+     double error = 0;
+-    #pragma omp parallel for
+-    for (NodeID n=0; n < g.num_nodes(); n++)
++#pragma omp parallel for
++    for(NodeID n = 0; n < g.num_nodes(); n++)
+       outgoing_contrib[n] = scores[n] / g.out_degree(n);
+-    #pragma omp parallel for reduction(+ : error) schedule(dynamic, 64)
+-    for (NodeID u=0; u < g.num_nodes(); u++) {
++#pragma omp parallel for reduction(+ : error) schedule(dynamic, 64)
++    for(NodeID u = 0; u < g.num_nodes(); u++) {
+       ScoreT incoming_total = 0;
+-      for (NodeID v : g.in_neigh(u))
++      for(NodeID v : g.in_neigh(u))
+         incoming_total += outgoing_contrib[v];
+       ScoreT old_score = scores[u];
+-      scores[u] = base_score + kDamp * incoming_total;
++      scores[u]        = base_score + kDamp * incoming_total;
+       error += fabs(scores[u] - old_score);
+     }
+-    printf(" %2d    %lf\n", iter, error);
+-    if (error < epsilon)
++    if(error < epsilon)
+       break;
+   }
+   return scores;
+ }
+ 
+ 
+-void PrintTopScores(const Graph &g, const pvector<ScoreT> &scores) {
++void PrintTopScores(const Graph& g, const pvector<ScoreT>& scores) {
+   vector<pair<NodeID, ScoreT>> score_pairs(g.num_nodes());
+-  for (NodeID n=0; n < g.num_nodes(); n++) {
++  for(NodeID n = 0; n < g.num_nodes(); n++) {
+     score_pairs[n] = make_pair(n, scores[n]);
+   }
+-  int k = 5;
++  int                          k     = 5;
+   vector<pair<ScoreT, NodeID>> top_k = TopK(score_pairs, k);
+-  k = min(k, static_cast<int>(top_k.size()));
+-  for (auto kvp : top_k)
++  k                                  = min(k, static_cast<int>(top_k.size()));
++  for(auto kvp : top_k)
+     cout << kvp.second << ":" << kvp.first << endl;
+ }
+ 
+ 
+ // Verifies by asserting a single serial iteration in push direction has
+ //   error < target_error
+-bool PRVerifier(const Graph &g, const pvector<ScoreT> &scores,
+-                        double target_error) {
+-  const ScoreT base_score = (1.0f - kDamp) / g.num_nodes();
++bool PRVerifier(const Graph& g, const pvector<ScoreT>& scores,
++                double target_error) {
++  const ScoreT    base_score = (1.0f - kDamp) / g.num_nodes();
+   pvector<ScoreT> incomming_sums(g.num_nodes(), 0);
+-  double error = 0;
+-  for (NodeID u : g.vertices()) {
++  double          error = 0;
++  for(NodeID u : g.vertices()) {
+     ScoreT outgoing_contrib = scores[u] / g.out_degree(u);
+-    for (NodeID v : g.out_neigh(u))
++    for(NodeID v : g.out_neigh(u))
+       incomming_sums[v] += outgoing_contrib;
+   }
+-  for (NodeID n : g.vertices()) {
++  for(NodeID n : g.vertices()) {
+     error += fabs(base_score + kDamp * incomming_sums[n] - scores[n]);
+     incomming_sums[n] = 0;
+   }
+@@ -95,14 +94,14 @@ bool PRVerifier(const Graph &g, const pvector<ScoreT> &scores,
+ 
+ int main(int argc, char* argv[]) {
+   CLPageRank cli(argc, argv, "pagerank", 1e-4, 20);
+-  if (!cli.ParseArgs())
++  if(!cli.ParseArgs())
+     return -1;
+   Builder b(cli);
+-  Graph g = b.MakeGraph();
+-  auto PRBound = [&cli] (const Graph &g) {
++  Graph   g       = b.MakeGraph();
++  auto    PRBound = [&cli](const Graph& g) {
+     return PageRankPull(g, cli.max_iters(), cli.tolerance());
+   };
+-  auto VerifierBound = [&cli] (const Graph &g, const pvector<ScoreT> &scores) {
++  auto VerifierBound = [&cli](const Graph& g, const pvector<ScoreT>& scores) {
+     return PRVerifier(g, scores, cli.tolerance());
+   };
+   BenchmarkKernel(cli, g, PRBound, PrintTopScores, VerifierBound);
+diff --git a/src/pvector.h b/src/pvector.h
+index 8c47369..ad8e093 100644
+--- a/src/pvector.h
++++ b/src/pvector.h
+@@ -27,8 +27,8 @@ class pvector {
+   pvector() : start_(nullptr), end_size_(nullptr), end_capacity_(nullptr) {}
+ 
+   explicit pvector(size_t num_elements) {
+-    start_ = new T_[num_elements];
+-    end_size_ = start_ + num_elements;
++    start_        = new T_[num_elements];
++    end_size_     = start_ + num_elements;
+     end_capacity_ = end_size_;
+   }
+ 
+@@ -36,78 +36,70 @@ class pvector {
+     fill(init_val);
+   }
+ 
+-  pvector(iterator copy_begin, iterator copy_end)
+-      : pvector(copy_end - copy_begin) {
+-    #pragma omp parallel for
+-    for (size_t i=0; i < capacity(); i++)
++  pvector(iterator copy_begin, iterator copy_end) :
++      pvector(copy_end - copy_begin) {
++#pragma omp parallel for
++    for(size_t i = 0; i < capacity(); i++)
+       start_[i] = copy_begin[i];
+   }
+ 
+   // don't want this to be copied, too much data to move
+-  pvector(const pvector &other) = delete;
++  pvector(const pvector& other) = delete;
+ 
+   // prefer move because too much data to copy
+-  pvector(pvector &&other)
+-      : start_(other.start_), end_size_(other.end_size_),
+-        end_capacity_(other.end_capacity_) {
+-    other.start_ = nullptr;
+-    other.end_size_ = nullptr;
++  pvector(pvector&& other) :
++      start_(other.start_), end_size_(other.end_size_),
++      end_capacity_(other.end_capacity_) {
++    other.start_        = nullptr;
++    other.end_size_     = nullptr;
+     other.end_capacity_ = nullptr;
+   }
+ 
+   // want move assignment
+-  pvector& operator= (pvector &&other) {
+-    start_ = other.start_;
+-    end_size_ = other.end_size_;
+-    end_capacity_ = other.end_capacity_;
+-    other.start_ = nullptr;
+-    other.end_size_ = nullptr;
++  pvector& operator=(pvector&& other) {
++    start_              = other.start_;
++    end_size_           = other.end_size_;
++    end_capacity_       = other.end_capacity_;
++    other.start_        = nullptr;
++    other.end_size_     = nullptr;
+     other.end_capacity_ = nullptr;
+     return *this;
+   }
+ 
+   ~pvector() {
+-    if (start_ != nullptr)
++    if(start_ != nullptr)
+       delete[] start_;
+   }
+ 
+   // not thread-safe
+   void reserve(size_t num_elements) {
+-    if (num_elements > capacity()) {
+-      T_ *new_range = new T_[num_elements];
+-      #pragma omp parallel for
+-      for (size_t i=0; i < size(); i++)
++    if(num_elements > capacity()) {
++      T_* new_range = new T_[num_elements];
++#pragma omp parallel for
++      for(size_t i = 0; i < size(); i++)
+         new_range[i] = start_[i];
+       end_size_ = new_range + size();
+       delete[] start_;
+-      start_ = new_range;
++      start_        = new_range;
+       end_capacity_ = start_ + num_elements;
+     }
+   }
+ 
+-  bool empty() {
+-    return end_size_ == start_;
+-  }
++  bool empty() { return end_size_ == start_; }
+ 
+-  void clear() {
+-    end_size_ = start_;
+-  }
++  void clear() { end_size_ = start_; }
+ 
+   void resize(size_t num_elements) {
+     reserve(num_elements);
+     end_size_ = start_ + num_elements;
+   }
+ 
+-  T_& operator[](size_t n) {
+-    return start_[n];
+-  }
++  T_& operator[](size_t n) { return start_[n]; }
+ 
+-  const T_& operator[](size_t n) const {
+-    return start_[n];
+-  }
++  const T_& operator[](size_t n) const { return start_[n]; }
+ 
+   void push_back(T_ val) {
+-    if (size() == capacity()) {
++    if(size() == capacity()) {
+       size_t new_size = capacity() == 0 ? 1 : capacity() * growth_factor;
+       reserve(new_size);
+     }
+@@ -116,32 +108,22 @@ class pvector {
+   }
+ 
+   void fill(T_ init_val) {
+-    #pragma omp parallel for
+-    for (T_* ptr=start_; ptr < end_size_; ptr++)
++#pragma omp parallel for
++    for(T_* ptr = start_; ptr < end_size_; ptr++)
+       *ptr = init_val;
+   }
+ 
+-  size_t capacity() const {
+-    return end_capacity_ - start_;
+-  }
++  size_t capacity() const { return end_capacity_ - start_; }
+ 
+-  size_t size() const {
+-    return end_size_ - start_;
+-  }
++  size_t size() const { return end_size_ - start_; }
+ 
+-  iterator begin() const {
+-    return start_;
+-  }
++  iterator begin() const { return start_; }
+ 
+-  iterator end() const {
+-    return end_size_;
+-  }
++  iterator end() const { return end_size_; }
+ 
+-  T_* data() const {
+-    return start_;
+-  }
++  T_* data() const { return start_; }
+ 
+-  void swap(pvector &other) {
++  void swap(pvector& other) {
+     std::swap(start_, other.start_);
+     std::swap(end_size_, other.end_size_);
+     std::swap(end_capacity_, other.end_capacity_);
+@@ -149,9 +131,9 @@ class pvector {
+ 
+ 
+  private:
+-  T_* start_;
+-  T_* end_size_;
+-  T_* end_capacity_;
++  T_*                 start_;
++  T_*                 end_size_;
++  T_*                 end_capacity_;
+   static const size_t growth_factor = 2;
+ };
+ 
+diff --git a/src/reader.h b/src/reader.h
+index 2f4a1f9..33bd4bd 100644
+--- a/src/reader.h
++++ b/src/reader.h
+@@ -4,8 +4,8 @@
+ #ifndef READER_H_
+ #define READER_H_
+ 
+-#include <iostream>
+ #include <fstream>
++#include <iostream>
+ #include <sstream>
+ #include <string>
+ #include <type_traits>
+@@ -32,51 +32,51 @@ template <typename NodeID_, typename DestID_ = NodeID_,
+           typename WeightT_ = NodeID_, bool invert = true>
+ class Reader {
+   typedef EdgePair<NodeID_, DestID_> Edge;
+-  typedef pvector<Edge> EdgeList;
+-  std::string filename_;
++  typedef pvector<Edge>              EdgeList;
++  std::string                        filename_;
+ 
+  public:
+   explicit Reader(std::string filename) : filename_(filename) {}
+ 
+   std::string GetSuffix() {
+     std::size_t suff_pos = filename_.rfind('.');
+-    if (suff_pos == std::string::npos) {
++    if(suff_pos == std::string::npos) {
+       std::cout << "Could't find suffix of " << filename_ << std::endl;
+       std::exit(-1);
+     }
+     return filename_.substr(suff_pos);
+   }
+ 
+-  EdgeList ReadInEL(std::ifstream &in) {
++  EdgeList ReadInEL(std::ifstream& in) {
+     EdgeList el;
+-    NodeID_ u, v;
+-    while (in >> u >> v) {
++    NodeID_  u, v;
++    while(in >> u >> v) {
+       el.push_back(Edge(u, v));
+     }
+     return el;
+   }
+ 
+-  EdgeList ReadInWEL(std::ifstream &in) {
+-    EdgeList el;
+-    NodeID_ u;
++  EdgeList ReadInWEL(std::ifstream& in) {
++    EdgeList                      el;
++    NodeID_                       u;
+     NodeWeight<NodeID_, WeightT_> v;
+-    while (in >> u >> v) {
++    while(in >> u >> v) {
+       el.push_back(Edge(u, v));
+     }
+     return el;
+   }
+ 
+   // Note: converts vertex numbering from 1..N to 0..N-1
+-  EdgeList ReadInGR(std::ifstream &in) {
+-    EdgeList el;
+-    char c;
+-    NodeID_ u;
++  EdgeList ReadInGR(std::ifstream& in) {
++    EdgeList                      el;
++    char                          c;
++    NodeID_                       u;
+     NodeWeight<NodeID_, WeightT_> v;
+-    while (!in.eof()) {
++    while(!in.eof()) {
+       c = in.peek();
+-      if (c == 'a') {
++      if(c == 'a') {
+         in >> c >> u >> v;
+-        el.push_back(Edge(u - 1, NodeWeight<NodeID_, WeightT_>(v.v-1, v.w)));
++        el.push_back(Edge(u - 1, NodeWeight<NodeID_, WeightT_>(v.v - 1, v.w)));
+       } else {
+         in.ignore(200, '\n');
+       }
+@@ -85,27 +85,27 @@ class Reader {
+   }
+ 
+   // Note: converts vertex numbering from 1..N to 0..N-1
+-  EdgeList ReadInMetis(std::ifstream &in, bool &needs_weights) {
+-    EdgeList el;
+-    NodeID_ num_nodes, num_edges;
+-    char c;
++  EdgeList ReadInMetis(std::ifstream& in, bool& needs_weights) {
++    EdgeList    el;
++    NodeID_     num_nodes, num_edges;
++    char        c;
+     std::string line;
+-    bool read_weights = false;
+-    while (true) {
++    bool        read_weights = false;
++    while(true) {
+       c = in.peek();
+-      if (c == '%') {
++      if(c == '%') {
+         in.ignore(200, '\n');
+       } else {
+         std::getline(in, line, '\n');
+         std::istringstream header_stream(line);
+         header_stream >> num_nodes >> num_edges;
+         header_stream >> std::ws;
+-        if (!header_stream.eof()) {
++        if(!header_stream.eof()) {
+           int32_t fmt;
+           header_stream >> fmt;
+-          if (fmt == 1) {
++          if(fmt == 1) {
+             read_weights = true;
+-          } else if ((fmt != 0) && (fmt != 100)) {
++          } else if((fmt != 0) && (fmt != 100)) {
+             std::cout << "Do not support METIS fmt type: " << fmt << std::endl;
+             std::exit(-20);
+           }
+@@ -114,23 +114,23 @@ class Reader {
+       }
+     }
+     NodeID_ u = 0;
+-    while (u < num_nodes) {
++    while(u < num_nodes) {
+       c = in.peek();
+-      if (c == '%') {
++      if(c == '%') {
+         in.ignore(200, '\n');
+       } else {
+         std::getline(in, line);
+-        if (line != "") {
++        if(line != "") {
+           std::istringstream edge_stream(line);
+-          if (read_weights) {
++          if(read_weights) {
+             NodeWeight<NodeID_, WeightT_> v;
+-            while (edge_stream >> v >> std::ws) {
++            while(edge_stream >> v >> std::ws) {
+               v.v -= 1;
+               el.push_back(Edge(u, v));
+             }
+           } else {
+             NodeID_ v;
+-            while (edge_stream >> v >> std::ws) {
++            while(edge_stream >> v >> std::ws) {
+               el.push_back(Edge(u, v - 1));
+             }
+           }
+@@ -144,44 +144,44 @@ class Reader {
+ 
+   // Note: converts vertex numbering from 1..N to 0..N-1
+   // Note: weights casted to type WeightT_
+-  EdgeList ReadInMTX(std::ifstream &in, bool &needs_weights) {
+-    EdgeList el;
++  EdgeList ReadInMTX(std::ifstream& in, bool& needs_weights) {
++    EdgeList    el;
+     std::string start, object, format, field, symmetry, line;
+     in >> start >> object >> format >> field >> symmetry >> std::ws;
+-    if (start != "%%MatrixMarket") {
++    if(start != "%%MatrixMarket") {
+       std::cout << ".mtx file did not start with %%MatrixMarket" << std::endl;
+       std::exit(-21);
+     }
+-    if ((object != "matrix") || (format != "coordinate")) {
++    if((object != "matrix") || (format != "coordinate")) {
+       std::cout << "only allow matrix coordinate format for .mtx" << std::endl;
+       std::exit(-22);
+     }
+-    if (field == "complex") {
++    if(field == "complex") {
+       std::cout << "do not support complex weights for .mtx" << std::endl;
+       std::exit(-23);
+     }
+     bool read_weights;
+-    if (field == "pattern") {
++    if(field == "pattern") {
+       read_weights = false;
+-    } else if ((field == "real") || (field == "double") ||
+-               (field == "integer")) {
++    } else if((field == "real") || (field == "double") ||
++              (field == "integer")) {
+       read_weights = true;
+     } else {
+       std::cout << "unrecognized field type for .mtx" << std::endl;
+       std::exit(-24);
+     }
+     bool undirected;
+-    if (symmetry == "symmetric") {
++    if(symmetry == "symmetric") {
+       undirected = true;
+-    } else if ((symmetry == "general") || (symmetry == "skew-symmetric")) {
++    } else if((symmetry == "general") || (symmetry == "skew-symmetric")) {
+       undirected = false;
+     } else {
+       std::cout << "unsupported symmetry type for .mtx" << std::endl;
+       std::exit(-25);
+     }
+-    while (true) {
++    while(true) {
+       char c = in.peek();
+-      if (c == '%') {
++      if(c == '%') {
+         in.ignore(200, '\n');
+       } else {
+         break;
+@@ -189,27 +189,27 @@ class Reader {
+     }
+     int64_t m, n, nonzeros;
+     in >> m >> n >> nonzeros >> std::ws;
+-    if (m != n) {
++    if(m != n) {
+       std::cout << m << " " << n << " " << nonzeros << std::endl;
+       std::cout << "matrix must be square for .mtx" << std::endl;
+       std::exit(-26);
+     }
+-    while (std::getline(in, line)) {
++    while(std::getline(in, line)) {
+       std::istringstream edge_stream(line);
+-      NodeID_ u;
++      NodeID_            u;
+       edge_stream >> u;
+-      if (read_weights) {
++      if(read_weights) {
+         NodeWeight<NodeID_, WeightT_> v;
+         edge_stream >> v;
+         v.v -= 1;
+         el.push_back(Edge(u - 1, v));
+-        if (undirected)
++        if(undirected)
+           el.push_back(Edge(v.v, NodeWeight<NodeID_, WeightT_>(u - 1, v.w)));
+       } else {
+         NodeID_ v;
+         edge_stream >> v;
+         el.push_back(Edge(u - 1, v - 1));
+-        if (undirected)
++        if(undirected)
+           el.push_back(Edge(v - 1, u - 1));
+       }
+     }
+@@ -217,27 +217,27 @@ class Reader {
+     return el;
+   }
+ 
+-  EdgeList ReadFile(bool &needs_weights) {
++  EdgeList ReadFile(bool& needs_weights) {
+     Timer t;
+     t.Start();
+-    EdgeList el;
+-    std::string suffix = GetSuffix();
++    EdgeList      el;
++    std::string   suffix = GetSuffix();
+     std::ifstream file(filename_);
+-    if (!file.is_open()) {
++    if(!file.is_open()) {
+       std::cout << "Couldn't open file " << filename_ << std::endl;
+       std::exit(-2);
+     }
+-    if (suffix == ".el") {
++    if(suffix == ".el") {
+       el = ReadInEL(file);
+-    } else if (suffix == ".wel") {
++    } else if(suffix == ".wel") {
+       needs_weights = false;
+-      el = ReadInWEL(file);
+-    } else if (suffix == ".gr") {
++      el            = ReadInWEL(file);
++    } else if(suffix == ".gr") {
+       needs_weights = false;
+-      el = ReadInGR(file);
+-    } else if (suffix == ".graph") {
++      el            = ReadInGR(file);
++    } else if(suffix == ".graph") {
+       el = ReadInMetis(file, needs_weights);
+-    } else if (suffix == ".mtx") {
++    } else if(suffix == ".mtx") {
+       el = ReadInMTX(file, needs_weights);
+     } else {
+       std::cout << "Unrecognized suffix: " << suffix << std::endl;
+@@ -251,44 +251,44 @@ class Reader {
+ 
+   CSRGraph<NodeID_, DestID_, invert> ReadSerializedGraph() {
+     bool weighted = GetSuffix() == ".wsg";
+-    if (!std::is_same<NodeID_, SGID>::value) {
++    if(!std::is_same<NodeID_, SGID>::value) {
+       std::cout << "serialized graphs only allowed for 32bit" << std::endl;
+       std::exit(-5);
+     }
+-    if (!weighted && !std::is_same<NodeID_, DestID_>::value) {
++    if(!weighted && !std::is_same<NodeID_, DestID_>::value) {
+       std::cout << ".sg not allowed for weighted graphs" << std::endl;
+       std::exit(-5);
+     }
+-    if (weighted && std::is_same<NodeID_, DestID_>::value) {
++    if(weighted && std::is_same<NodeID_, DestID_>::value) {
+       std::cout << ".wsg only allowed for weighted graphs" << std::endl;
+       std::exit(-5);
+     }
+-    if (weighted && !std::is_same<WeightT_, SGID>::value) {
++    if(weighted && !std::is_same<WeightT_, SGID>::value) {
+       std::cout << ".wsg only allowed for int32_t weights" << std::endl;
+       std::exit(-5);
+     }
+     std::ifstream file(filename_);
+-    if (!file.is_open()) {
++    if(!file.is_open()) {
+       std::cout << "Couldn't open file " << filename_ << std::endl;
+       std::exit(-6);
+     }
+     Timer t;
+     t.Start();
+-    bool directed;
+-    SGOffset num_nodes, num_edges;
++    bool      directed;
++    SGOffset  num_nodes, num_edges;
+     DestID_ **index = nullptr, **inv_index = nullptr;
+-    DestID_ *neighs = nullptr, *inv_neighs = nullptr;
++    DestID_ * neighs = nullptr, *inv_neighs = nullptr;
+     file.read(reinterpret_cast<char*>(&directed), sizeof(bool));
+     file.read(reinterpret_cast<char*>(&num_edges), sizeof(SGOffset));
+     file.read(reinterpret_cast<char*>(&num_nodes), sizeof(SGOffset));
+-    pvector<SGOffset> offsets(num_nodes+1);
+-    neighs = new DestID_[num_edges];
+-    std::streamsize num_index_bytes = (num_nodes+1) * sizeof(SGOffset);
++    pvector<SGOffset> offsets(num_nodes + 1);
++    neighs                          = new DestID_[num_edges];
++    std::streamsize num_index_bytes = (num_nodes + 1) * sizeof(SGOffset);
+     std::streamsize num_neigh_bytes = num_edges * sizeof(DestID_);
+     file.read(reinterpret_cast<char*>(offsets.data()), num_index_bytes);
+     file.read(reinterpret_cast<char*>(neighs), num_neigh_bytes);
+     index = CSRGraph<NodeID_, DestID_>::GenIndex(offsets, neighs);
+-    if (directed && invert) {
++    if(directed && invert) {
+       inv_neighs = new DestID_[num_edges];
+       file.read(reinterpret_cast<char*>(offsets.data()), num_index_bytes);
+       file.read(reinterpret_cast<char*>(inv_neighs), num_neigh_bytes);
+@@ -297,7 +297,7 @@ class Reader {
+     file.close();
+     t.Stop();
+     PrintTime("Read Time", t.Seconds());
+-    if (directed)
++    if(directed)
+       return CSRGraph<NodeID_, DestID_, invert>(num_nodes, index, neighs,
+                                                 inv_index, inv_neighs);
+     else
+diff --git a/src/sliding_queue.h b/src/sliding_queue.h
+index e08854a..b56502b 100644
+--- a/src/sliding_queue.h
++++ b/src/sliding_queue.h
+@@ -25,7 +25,7 @@ class QueueBuffer;
+ 
+ template <typename T>
+ class SlidingQueue {
+-  T *shared;
++  T*     shared;
+   size_t shared_in;
+   size_t shared_out_start;
+   size_t shared_out_end;
+@@ -37,73 +37,59 @@ class SlidingQueue {
+     reset();
+   }
+ 
+-  ~SlidingQueue() {
+-    delete[] shared;
+-  }
++  ~SlidingQueue() { delete[] shared; }
+ 
+-  void push_back(T to_add) {
+-    shared[shared_in++] = to_add;
+-  }
++  void push_back(T to_add) { shared[shared_in++] = to_add; }
+ 
+-  bool empty() const {
+-    return shared_out_start == shared_out_end;
+-  }
++  bool empty() const { return shared_out_start == shared_out_end; }
+ 
+   void reset() {
+     shared_out_start = 0;
+-    shared_out_end = 0;
+-    shared_in = 0;
++    shared_out_end   = 0;
++    shared_in        = 0;
+   }
+ 
+   void slide_window() {
+     shared_out_start = shared_out_end;
+-    shared_out_end = shared_in;
++    shared_out_end   = shared_in;
+   }
+ 
+   typedef T* iterator;
+ 
+-  iterator begin() const {
+-    return shared + shared_out_start;
+-  }
++  iterator begin() const { return shared + shared_out_start; }
+ 
+-  iterator end() const {
+-    return shared + shared_out_end;
+-  }
++  iterator end() const { return shared + shared_out_end; }
+ 
+-  size_t size() const {
+-    return end() - begin();
+-  }
++  size_t size() const { return end() - begin(); }
+ };
+ 
+ 
+ template <typename T>
+ class QueueBuffer {
+-  size_t in;
+-  T *local_queue;
+-  SlidingQueue<T> &sq;
+-  const size_t local_size;
++  size_t           in;
++  T*               local_queue;
++  SlidingQueue<T>& sq;
++  const size_t     local_size;
+ 
+  public:
+-  explicit QueueBuffer(SlidingQueue<T> &master, size_t given_size = 16384)
+-      : sq(master), local_size(given_size) {
+-    in = 0;
++  explicit QueueBuffer(SlidingQueue<T>& master, size_t given_size = 16384) :
++      sq(master), local_size(given_size) {
++    in          = 0;
+     local_queue = new T[local_size];
+   }
+ 
+-  ~QueueBuffer() {
+-    delete[] local_queue;
+-  }
++  ~QueueBuffer() { delete[] local_queue; }
+ 
+   void push_back(T to_add) {
+-    if (in == local_size)
++    if(in == local_size)
+       flush();
+     local_queue[in++] = to_add;
+   }
+ 
+   void flush() {
+-    T *shared_queue = sq.shared;
+-    size_t copy_start = fetch_and_add(sq.shared_in, in);
+-    std::copy(local_queue, local_queue+in, shared_queue+copy_start);
++    T*     shared_queue = sq.shared;
++    size_t copy_start   = fetch_and_add(sq.shared_in, in);
++    std::copy(local_queue, local_queue + in, shared_queue + copy_start);
+     in = 0;
+   }
+ };
+diff --git a/src/sssp.cc b/src/sssp.cc
+index d6d8d65..998de50 100644
+--- a/src/sssp.cc
++++ b/src/sssp.cc
+@@ -2,8 +2,8 @@
+ // See LICENSE.txt for license details
+ 
+ #include <cinttypes>
+-#include <limits>
+ #include <iostream>
++#include <limits>
+ #include <queue>
+ #include <vector>
+ 
+@@ -54,86 +54,81 @@ execution order, leading to significant speedup on large diameter road networks.
+ 
+ [2] Yunming Zhang, Ajay Brahmakshatriya, Xinyi Chen, Laxman Dhulipala,
+     Shoaib Kamil, Saman Amarasinghe, and Julian Shun. "Optimizing ordered graph
+-    algorithms with GraphIt." The 18th International Symposium on Code Generation
+-    and Optimization (CGO), pages 158-170, 2020.
++    algorithms with GraphIt." The 18th International Symposium on Code
++Generation and Optimization (CGO), pages 158-170, 2020.
+ */
+ 
+ 
+ using namespace std;
+ 
+-const WeightT kDistInf = numeric_limits<WeightT>::max()/2;
+-const size_t kMaxBin = numeric_limits<size_t>::max()/2;
+-const size_t kBinSizeThreshold = 1000;
++const WeightT kDistInf          = numeric_limits<WeightT>::max() / 2;
++const size_t  kMaxBin           = numeric_limits<size_t>::max() / 2;
++const size_t  kBinSizeThreshold = 1000;
+ 
+-inline
+-void RelaxEdges(const WGraph &g, NodeID u, WeightT delta,
+-                pvector<WeightT> &dist, vector <vector<NodeID>> &local_bins) {
+-  for (WNode wn : g.out_neigh(u)) {
++inline void RelaxEdges(const WGraph& g, NodeID u, WeightT delta,
++                       pvector<WeightT>&       dist,
++                       vector<vector<NodeID>>& local_bins) {
++  for(WNode wn : g.out_neigh(u)) {
+     WeightT old_dist = dist[wn.v];
+     WeightT new_dist = dist[u] + wn.w;
+-    while (new_dist < old_dist) {
+-      if (compare_and_swap(dist[wn.v], old_dist, new_dist)) {
+-        size_t dest_bin = new_dist/delta;
+-        if (dest_bin >= local_bins.size())
+-          local_bins.resize(dest_bin+1);
++    while(new_dist < old_dist) {
++      if(compare_and_swap(dist[wn.v], old_dist, new_dist)) {
++        size_t dest_bin = new_dist / delta;
++        if(dest_bin >= local_bins.size())
++          local_bins.resize(dest_bin + 1);
+         local_bins[dest_bin].push_back(wn.v);
+         break;
+       }
+-      old_dist = dist[wn.v];      // swap failed, recheck dist update & retry
++      old_dist = dist[wn.v];  // swap failed, recheck dist update & retry
+     }
+   }
+ }
+ 
+-pvector<WeightT> DeltaStep(const WGraph &g, NodeID source, WeightT delta) {
+-  Timer t;
++pvector<WeightT> DeltaStep(const WGraph& g, NodeID source, WeightT delta) {
+   pvector<WeightT> dist(g.num_nodes(), kDistInf);
+   dist[source] = 0;
+   pvector<NodeID> frontier(g.num_edges_directed());
+   // two element arrays for double buffering curr=iter&1, next=(iter+1)&1
+   size_t shared_indexes[2] = {0, kMaxBin};
+   size_t frontier_tails[2] = {1, 0};
+-  frontier[0] = source;
+-  t.Start();
+-  #pragma omp parallel
++  frontier[0]              = source;
++#pragma omp parallel
+   {
+-    vector<vector<NodeID> > local_bins(0);
+-    size_t iter = 0;
+-    while (shared_indexes[iter&1] != kMaxBin) {
+-      size_t &curr_bin_index = shared_indexes[iter&1];
+-      size_t &next_bin_index = shared_indexes[(iter+1)&1];
+-      size_t &curr_frontier_tail = frontier_tails[iter&1];
+-      size_t &next_frontier_tail = frontier_tails[(iter+1)&1];
+-      #pragma omp for nowait schedule(dynamic, 64)
+-      for (size_t i=0; i < curr_frontier_tail; i++) {
++    vector<vector<NodeID>> local_bins(0);
++    size_t                 iter = 0;
++    while(shared_indexes[iter & 1] != kMaxBin) {
++      size_t& curr_bin_index     = shared_indexes[iter & 1];
++      size_t& next_bin_index     = shared_indexes[(iter + 1) & 1];
++      size_t& curr_frontier_tail = frontier_tails[iter & 1];
++      size_t& next_frontier_tail = frontier_tails[(iter + 1) & 1];
++#pragma omp for nowait schedule(dynamic, 64)
++      for(size_t i = 0; i < curr_frontier_tail; i++) {
+         NodeID u = frontier[i];
+-        if (dist[u] >= delta * static_cast<WeightT>(curr_bin_index))
++        if(dist[u] >= delta * static_cast<WeightT>(curr_bin_index))
+           RelaxEdges(g, u, delta, dist, local_bins);
+       }
+-      while (curr_bin_index < local_bins.size() &&
+-             !local_bins[curr_bin_index].empty() &&
+-             local_bins[curr_bin_index].size() < kBinSizeThreshold) {
++      while(curr_bin_index < local_bins.size() &&
++            !local_bins[curr_bin_index].empty() &&
++            local_bins[curr_bin_index].size() < kBinSizeThreshold) {
+         vector<NodeID> curr_bin_copy = local_bins[curr_bin_index];
+         local_bins[curr_bin_index].resize(0);
+-        for (NodeID u : curr_bin_copy)
++        for(NodeID u : curr_bin_copy)
+           RelaxEdges(g, u, delta, dist, local_bins);
+       }
+-      for (size_t i=curr_bin_index; i < local_bins.size(); i++) {
+-        if (!local_bins[i].empty()) {
+-          #pragma omp critical
++      for(size_t i = curr_bin_index; i < local_bins.size(); i++) {
++        if(!local_bins[i].empty()) {
++#pragma omp critical
+           next_bin_index = min(next_bin_index, i);
+           break;
+         }
+       }
+-      #pragma omp barrier
+-      #pragma omp single nowait
++#pragma omp barrier
++#pragma omp single nowait
+       {
+-        t.Stop();
+-        PrintStep(curr_bin_index, t.Millisecs(), curr_frontier_tail);
+-        t.Start();
+-        curr_bin_index = kMaxBin;
++        curr_bin_index     = kMaxBin;
+         curr_frontier_tail = 0;
+       }
+-      if (next_bin_index < local_bins.size()) {
++      if(next_bin_index < local_bins.size()) {
+         size_t copy_start = fetch_and_add(next_frontier_tail,
+                                           local_bins[next_bin_index].size());
+         copy(local_bins[next_bin_index].begin(),
+@@ -141,38 +136,36 @@ pvector<WeightT> DeltaStep(const WGraph &g, NodeID source, WeightT delta) {
+         local_bins[next_bin_index].resize(0);
+       }
+       iter++;
+-      #pragma omp barrier
++#pragma omp barrier
+     }
+-    #pragma omp single
+-    cout << "took " << iter << " iterations" << endl;
+   }
+   return dist;
+ }
+ 
+ 
+-void PrintSSSPStats(const WGraph &g, const pvector<WeightT> &dist) {
+-  auto NotInf = [](WeightT d) { return d != kDistInf; };
++void PrintSSSPStats(const WGraph& g, const pvector<WeightT>& dist) {
++  auto    NotInf      = [](WeightT d) { return d != kDistInf; };
+   int64_t num_reached = count_if(dist.begin(), dist.end(), NotInf);
+   cout << "SSSP Tree reaches " << num_reached << " nodes" << endl;
+ }
+ 
+ 
+ // Compares against simple serial implementation
+-bool SSSPVerifier(const WGraph &g, NodeID source,
+-                  const pvector<WeightT> &dist_to_test) {
++bool SSSPVerifier(const WGraph& g, NodeID source,
++                  const pvector<WeightT>& dist_to_test) {
+   // Serial Dijkstra implementation to get oracle distances
+   pvector<WeightT> oracle_dist(g.num_nodes(), kDistInf);
+   oracle_dist[source] = 0;
+-  typedef pair<WeightT, NodeID> WN;
++  typedef pair<WeightT, NodeID>               WN;
+   priority_queue<WN, vector<WN>, greater<WN>> mq;
+   mq.push(make_pair(0, source));
+-  while (!mq.empty()) {
++  while(!mq.empty()) {
+     WeightT td = mq.top().first;
+-    NodeID u = mq.top().second;
++    NodeID  u  = mq.top().second;
+     mq.pop();
+-    if (td == oracle_dist[u]) {
+-      for (WNode wn : g.out_neigh(u)) {
+-        if (td + wn.w < oracle_dist[wn.v]) {
++    if(td == oracle_dist[u]) {
++      for(WNode wn : g.out_neigh(u)) {
++        if(td + wn.w < oracle_dist[wn.v]) {
+           oracle_dist[wn.v] = td + wn.w;
+           mq.push(make_pair(td + wn.w, wn.v));
+         }
+@@ -181,8 +174,8 @@ bool SSSPVerifier(const WGraph &g, NodeID source,
+   }
+   // Report any mismatches
+   bool all_ok = true;
+-  for (NodeID n : g.vertices()) {
+-    if (dist_to_test[n] != oracle_dist[n]) {
++  for(NodeID n : g.vertices()) {
++    if(dist_to_test[n] != oracle_dist[n]) {
+       cout << n << ": " << dist_to_test[n] << " != " << oracle_dist[n] << endl;
+       all_ok = false;
+     }
+@@ -193,16 +186,16 @@ bool SSSPVerifier(const WGraph &g, NodeID source,
+ 
+ int main(int argc, char* argv[]) {
+   CLDelta<WeightT> cli(argc, argv, "single-source shortest-path");
+-  if (!cli.ParseArgs())
++  if(!cli.ParseArgs())
+     return -1;
+-  WeightedBuilder b(cli);
+-  WGraph g = b.MakeGraph();
++  WeightedBuilder      b(cli);
++  WGraph               g = b.MakeGraph();
+   SourcePicker<WGraph> sp(g, cli.start_vertex());
+-  auto SSSPBound = [&sp, &cli] (const WGraph &g) {
++  auto                 SSSPBound = [&sp, &cli](const WGraph& g) {
+     return DeltaStep(g, sp.PickNext(), cli.delta());
+   };
+   SourcePicker<WGraph> vsp(g, cli.start_vertex());
+-  auto VerifierBound = [&vsp] (const WGraph &g, const pvector<WeightT> &dist) {
++  auto VerifierBound = [&vsp](const WGraph& g, const pvector<WeightT>& dist) {
+     return SSSPVerifier(g, vsp.PickNext(), dist);
+   };
+   BenchmarkKernel(cli, g, SSSPBound, PrintSSSPStats, VerifierBound);
+diff --git a/src/tc.cc b/src/tc.cc
+index fa1ef23..bf89bbc 100644
+--- a/src/tc.cc
++++ b/src/tc.cc
+@@ -44,20 +44,20 @@ to relabel the graph, we use the heuristic in WorthRelabelling.
+ 
+ using namespace std;
+ 
+-size_t OrderedCount(const Graph &g) {
++size_t OrderedCount(const Graph& g) {
+   size_t total = 0;
+-  #pragma omp parallel for reduction(+ : total) schedule(dynamic, 64)
+-  for (NodeID u=0; u < g.num_nodes(); u++) {
+-    for (NodeID v : g.out_neigh(u)) {
+-      if (v > u)
++#pragma omp parallel for reduction(+ : total) schedule(dynamic, 64)
++  for(NodeID u = 0; u < g.num_nodes(); u++) {
++    for(NodeID v : g.out_neigh(u)) {
++      if(v > u)
+         break;
+       auto it = g.out_neigh(u).begin();
+-      for (NodeID w : g.out_neigh(v)) {
+-        if (w > v)
++      for(NodeID w : g.out_neigh(v)) {
++        if(w > v)
+           break;
+-        while (*it < w)
++        while(*it < w)
+           it++;
+-        if (w == *it)
++        if(w == *it)
+           total++;
+       }
+     }
+@@ -67,57 +67,55 @@ size_t OrderedCount(const Graph &g) {
+ 
+ 
+ // heuristic to see if sufficently dense power-law graph
+-bool WorthRelabelling(const Graph &g) {
++bool WorthRelabelling(const Graph& g) {
+   int64_t average_degree = g.num_edges() / g.num_nodes();
+-  if (average_degree < 10)
++  if(average_degree < 10)
+     return false;
+   SourcePicker<Graph> sp(g);
+-  int64_t num_samples = min(int64_t(1000), g.num_nodes());
+-  int64_t sample_total = 0;
+-  pvector<int64_t> samples(num_samples);
+-  for (int64_t trial=0; trial < num_samples; trial++) {
++  int64_t             num_samples  = min(int64_t(1000), g.num_nodes());
++  int64_t             sample_total = 0;
++  pvector<int64_t>    samples(num_samples);
++  for(int64_t trial = 0; trial < num_samples; trial++) {
+     samples[trial] = g.out_degree(sp.PickNext());
+     sample_total += samples[trial];
+   }
+   sort(samples.begin(), samples.end());
+   double sample_average = static_cast<double>(sample_total) / num_samples;
+-  double sample_median = samples[num_samples/2];
++  double sample_median  = samples[num_samples / 2];
+   return sample_average / 1.3 > sample_median;
+ }
+ 
+ 
+ // uses heuristic to see if worth relabeling
+-size_t Hybrid(const Graph &g) {
+-  if (WorthRelabelling(g))
++size_t Hybrid(const Graph& g) {
++  if(WorthRelabelling(g))
+     return OrderedCount(Builder::RelabelByDegree(g));
+   else
+     return OrderedCount(g);
+ }
+ 
+ 
+-void PrintTriangleStats(const Graph &g, size_t total_triangles) {
++void PrintTriangleStats(const Graph& g, size_t total_triangles) {
+   cout << total_triangles << " triangles" << endl;
+ }
+ 
+ 
+ // Compares with simple serial implementation that uses std::set_intersection
+-bool TCVerifier(const Graph &g, size_t test_total) {
+-  size_t total = 0;
++bool TCVerifier(const Graph& g, size_t test_total) {
++  size_t         total = 0;
+   vector<NodeID> intersection;
+   intersection.reserve(g.num_nodes());
+-  for (NodeID u : g.vertices()) {
+-    for (NodeID v : g.out_neigh(u)) {
+-      auto new_end = set_intersection(g.out_neigh(u).begin(),
+-                                      g.out_neigh(u).end(),
+-                                      g.out_neigh(v).begin(),
+-                                      g.out_neigh(v).end(),
+-                                      intersection.begin());
++  for(NodeID u : g.vertices()) {
++    for(NodeID v : g.out_neigh(u)) {
++      auto new_end = set_intersection(
++        g.out_neigh(u).begin(), g.out_neigh(u).end(), g.out_neigh(v).begin(),
++        g.out_neigh(v).end(), intersection.begin());
+       intersection.resize(new_end - intersection.begin());
+       total += intersection.size();
+     }
+   }
+   total = total / 6;  // each triangle was counted 6 times
+-  if (total != test_total)
++  if(total != test_total)
+     cout << total << " != " << test_total << endl;
+   return total == test_total;
+ }
+@@ -125,11 +123,11 @@ bool TCVerifier(const Graph &g, size_t test_total) {
+ 
+ int main(int argc, char* argv[]) {
+   CLApp cli(argc, argv, "triangle count");
+-  if (!cli.ParseArgs())
++  if(!cli.ParseArgs())
+     return -1;
+   Builder b(cli);
+-  Graph g = b.MakeGraph();
+-  if (g.directed()) {
++  Graph   g = b.MakeGraph();
++  if(g.directed()) {
+     cout << "Input graph is directed but tc requires undirected" << endl;
+     return -2;
+   }
+diff --git a/src/timer.h b/src/timer.h
+index 7868335..c4f6d14 100644
+--- a/src/timer.h
++++ b/src/timer.h
+@@ -23,20 +23,26 @@ class Timer {
+     elapsed_time_ = start_time_ = std::chrono::high_resolution_clock::now();
+   }
+ 
+-  void Stop() {
+-    elapsed_time_ = std::chrono::high_resolution_clock::now();
+-  }
++  void Stop() { elapsed_time_ = std::chrono::high_resolution_clock::now(); }
+ 
+   double Seconds() const {
+-    return std::chrono::duration_cast<std::chrono::duration<double>>(elapsed_time_ - start_time_).count();
++    return std::chrono::duration_cast<std::chrono::duration<double>>(
++             elapsed_time_ - start_time_)
++      .count();
+   }
+ 
+   double Millisecs() const {
+-    return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(elapsed_time_ - start_time_).count();
++    return std::chrono::duration_cast<
++             std::chrono::duration<double, std::milli>>(elapsed_time_ -
++                                                        start_time_)
++      .count();
+   }
+ 
+   double Microsecs() const {
+-    return std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(elapsed_time_ - start_time_).count();
++    return std::chrono::duration_cast<
++             std::chrono::duration<double, std::micro>>(elapsed_time_ -
++                                                        start_time_)
++      .count();
+   }
+ 
+  private:
+@@ -44,6 +50,11 @@ class Timer {
+ };
+ 
+ // Times op's execution using the timer t
+-#define TIME_OP(t, op) { t.Start(); (op); t.Stop(); }
++#define TIME_OP(t, op) \
++  {                    \
++    t.Start();         \
++    (op);              \
++    t.Stop();          \
++  }
+ 
+ #endif  // TIMER_H_
+diff --git a/src/util.h b/src/util.h
+index d335ec5..f77d89f 100644
+--- a/src/util.h
++++ b/src/util.h
+@@ -4,8 +4,8 @@
+ #ifndef UTIL_H_
+ #define UTIL_H_
+ 
+-#include <stdio.h>
+ #include <cinttypes>
++#include <stdio.h>
+ #include <string>
+ 
+ #include "timer.h"
+@@ -22,49 +22,51 @@ Miscellaneous helpers that don't fit into classes
+ static const int64_t kRandSeed = 27491095;
+ 
+ 
+-void PrintLabel(const std::string &label, const std::string &val) {
++void PrintLabel(const std::string& label, const std::string& val) {
+   printf("%-21s%7s\n", (label + ":").c_str(), val.c_str());
+ }
+ 
+-void PrintTime(const std::string &s, double seconds) {
++void PrintTime(const std::string& s, double seconds) {
+   printf("%-21s%3.5lf\n", (s + ":").c_str(), seconds);
+ }
+ 
+-void PrintStep(const std::string &s, int64_t count) {
++void PrintStep(const std::string& s, int64_t count) {
+   printf("%-14s%14" PRId64 "\n", (s + ":").c_str(), count);
+ }
+ 
+ void PrintStep(int step, double seconds, int64_t count = -1) {
+-  if (count != -1)
++  if(count != -1)
+     printf("%5d%11" PRId64 "  %10.5lf\n", step, count, seconds);
+   else
+     printf("%5d%23.5lf\n", step, seconds);
+ }
+ 
+-void PrintStep(const std::string &s, double seconds, int64_t count = -1) {
+-  if (count != -1)
++void PrintStep(const std::string& s, double seconds, int64_t count = -1) {
++  if(count != -1)
+     printf("%5s%11" PRId64 "  %10.5lf\n", s.c_str(), count, seconds);
+   else
+     printf("%5s%23.5lf\n", s.c_str(), seconds);
+ }
+ 
+ // Runs op and prints the time it took to execute labelled by label
+-#define TIME_PRINT(label, op) {   \
+-  Timer t_;                       \
+-  t_.Start();                     \
+-  (op);                           \
+-  t_.Stop();                      \
+-  PrintTime(label, t_.Seconds()); \
+-}
++#define TIME_PRINT(label, op)       \
++  {                                 \
++    Timer t_;                       \
++    t_.Start();                     \
++    (op);                           \
++    t_.Stop();                      \
++    PrintTime(label, t_.Seconds()); \
++  }
+ 
+ 
+ template <typename T_>
+ class RangeIter {
+   T_ x_;
++
+  public:
+   explicit RangeIter(T_ x) : x_(x) {}
+-  bool operator!=(RangeIter const& other) const { return x_ != other.x_; }
+-  T_ const& operator*() const { return x_; }
++  bool       operator!=(RangeIter const& other) const { return x_ != other.x_; }
++  T_ const&  operator*() const { return x_; }
+   RangeIter& operator++() {
+     ++x_;
+     return *this;
+@@ -72,9 +74,10 @@ class RangeIter {
+ };
+ 
+ template <typename T_>
+-class Range{
++class Range {
+   T_ from_;
+   T_ to_;
++
+  public:
+   explicit Range(T_ to) : from_(0), to_(to) {}
+   Range(T_ from, T_ to) : from_(from), to_(to) {}
+diff --git a/src/writer.h b/src/writer.h
+index c200e0e..e359c67 100644
+--- a/src/writer.h
++++ b/src/writer.h
+@@ -27,31 +27,31 @@ Given filename and graph, writes out the graph to storage
+ template <typename NodeID_, typename DestID_ = NodeID_>
+ class WriterBase {
+  public:
+-  explicit WriterBase(CSRGraph<NodeID_, DestID_> &g) : g_(g) {}
++  explicit WriterBase(CSRGraph<NodeID_, DestID_>& g) : g_(g) {}
+ 
+-  void WriteEL(std::fstream &out) {
+-    for (NodeID_ u=0; u < g_.num_nodes(); u++) {
+-      for (DestID_ v : g_.out_neigh(u))
++  void WriteEL(std::fstream& out) {
++    for(NodeID_ u = 0; u < g_.num_nodes(); u++) {
++      for(DestID_ v : g_.out_neigh(u))
+         out << u << " " << v << std::endl;
+     }
+   }
+ 
+-  void WriteSerializedGraph(std::fstream &out) {
+-    if (!std::is_same<NodeID_, SGID>::value) {
++  void WriteSerializedGraph(std::fstream& out) {
++    if(!std::is_same<NodeID_, SGID>::value) {
+       std::cout << "serialized graphs only allowed for 32b IDs" << std::endl;
+       std::exit(-4);
+     }
+-    if (!std::is_same<DestID_, NodeID_>::value &&
+-        !std::is_same<DestID_, NodeWeight<NodeID_, SGID>>::value) {
++    if(!std::is_same<DestID_, NodeID_>::value &&
++       !std::is_same<DestID_, NodeWeight<NodeID_, SGID>>::value) {
+       std::cout << ".wsg only allowed for int32_t weights" << std::endl;
+       std::exit(-8);
+     }
+-    bool directed = g_.directed();
+-    SGOffset num_nodes = g_.num_nodes();
+-    SGOffset edges_to_write = g_.num_edges_directed();
+-    std::streamsize index_bytes = (num_nodes+1) * sizeof(SGOffset);
++    bool            directed       = g_.directed();
++    SGOffset        num_nodes      = g_.num_nodes();
++    SGOffset        edges_to_write = g_.num_edges_directed();
++    std::streamsize index_bytes    = (num_nodes + 1) * sizeof(SGOffset);
+     std::streamsize neigh_bytes;
+-    if (std::is_same<DestID_, NodeID_>::value)
++    if(std::is_same<DestID_, NodeID_>::value)
+       neigh_bytes = edges_to_write * sizeof(SGID);
+     else
+       neigh_bytes = edges_to_write * sizeof(NodeWeight<NodeID_, SGID>);
+@@ -61,7 +61,7 @@ class WriterBase {
+     pvector<SGOffset> offsets = g_.VertexOffsets(false);
+     out.write(reinterpret_cast<char*>(offsets.data()), index_bytes);
+     out.write(reinterpret_cast<char*>(g_.out_neigh(0).begin()), neigh_bytes);
+-    if (directed) {
++    if(directed) {
+       offsets = g_.VertexOffsets(true);
+       out.write(reinterpret_cast<char*>(offsets.data()), index_bytes);
+       out.write(reinterpret_cast<char*>(g_.in_neigh(0).begin()), neigh_bytes);
+@@ -69,16 +69,16 @@ class WriterBase {
+   }
+ 
+   void WriteGraph(std::string filename, bool serialized = false) {
+-    if (filename == "") {
++    if(filename == "") {
+       std::cout << "No output filename given (Use -h for help)" << std::endl;
+       std::exit(-8);
+     }
+     std::fstream file(filename, std::ios::out | std::ios::binary);
+-    if (!file) {
++    if(!file) {
+       std::cout << "Couldn't write to file " << filename << std::endl;
+       std::exit(-5);
+     }
+-    if (serialized)
++    if(serialized)
+       WriteSerializedGraph(file);
+     else
+       WriteEL(file);
+@@ -86,8 +86,8 @@ class WriterBase {
+   }
+ 
+  private:
+-  CSRGraph<NodeID_, DestID_> &g_;
+-  std::string filename_;
++  CSRGraph<NodeID_, DestID_>& g_;
++  std::string                 filename_;
+ };
+ 
+ #endif  // WRITER_H_
