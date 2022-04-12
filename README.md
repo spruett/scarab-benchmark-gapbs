@@ -39,6 +39,11 @@ cd gapbs
 git apply --reject --whitespace=fix ../gapbs.patch
 ```
 
+Note: Patch was created using the following command, which saved all the staged, but uncommitted changes I had made to my personal GAP BS repo. Some changes may not be required.
+```
+git diff --cached > gapbs.patch
+```
+
 ### Step 4: Build Gap Benchmark Suite
 
 Build tested on g++ (GCC) 4.8.5 20150623 (Red Hat 4.8.5-44). 
