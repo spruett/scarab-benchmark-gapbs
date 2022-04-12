@@ -40,12 +40,19 @@ git apply --reject --whitespace=fix ../gapbs.patch
 ```
 
 ### Step 4: Build Gap Benchmark Suite
+
+Build tested on g++ (GCC) 4.8.5 20150623 (Red Hat 4.8.5-44). 
+
 ```
 cd gapbs
-make SERIAL=1 # Needed to produce single threaded code
+make clean
+make -j SERIAL=1 > make.out     # SERIAL needed to produce single threaded code
 ```
 
 ### Step 5: Run Scarab checkpoint scripts
+
+Make sure you set the variables in Step 1.
+
 ```
 ./run-gapbs.sh
 ```
